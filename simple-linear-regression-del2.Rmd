@@ -1,0 +1,93 @@
+---
+title: "MA575 Deliverable2"
+author: "Rui Gong"
+date: "2024-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+```
+
+```{r}
+# Read updated dataset
+bmw_data <- read.csv("/Users/rui/OneDrive/Documents/BU/MA575 Linear Models/Labs/Lab2/BMW Price Data/BMW-pricing.csv", header=TRUE, as.is=TRUE)
+# create summary
+summary(bmw_data)
+```
+
+```{r}
+# choose response and covariate
+# we are using price sold as response variable and age of car (year sold - year register) as covariate
+
+# clean the registration date and sold date vectors first
+sold_at_split <- strsplit(bmw_data$sold_at, "/")
+
+registration_split <- strsplit(bmw_data$registration_date, "/")
+
+# assign month only; all sold in 2018
+bmw_data$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+
+bmw_data$year_sold <- sapply(sold_at_split, function(x) as.integer(x[3]))
+
+bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+
+bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+price <- bmw_data$price # our y variable
+age <- bmw_data$year_sold-bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered) # our x variable
+
+length(price)
+length(age)
+```
+
+
+```{r}
+m1 <- lm(price~age)
+summary(m1)
+```
+```{r}
+# check the distribution of 2 variables
+summary(age) # mean > median, potentially right-skewed
+summary(price) # mean > median, potentially right-skewed
+scatterplot(price, age,
+     ylab="Price Sold in $", xlab="Age of Car",
+     pch=19, cex=0.2)
+# boxplot shows both variable is not normally distributed, scatterplot detects extreme outliers
+
+# make a new dataframe for cleaning outlier
+model_data <- data.frame(age = age, price = price)
+# Use leverage to check the outlier on age of cars
+lev <- hatvalues(m1)
+model_data$filter1 <- lev <= (4/length(age))
+# use z-score for residuals to check the outliers for age of cars
+resid = residuals(m1)
+z_resid = (resid - mean(resid))/sd(resid)
+model_data$filter2 <- abs(z_resid)<=3
+cleaned_data <- model_data[filter1 != FALSE & filter2 != FALSE, ]
+cleaned_data <- cleaned_data[, -3:-4]
+```
+
+```{r}
+summary(cleaned_data$price) # almost normally distributed
+summary(cleaned_data$age) # almost normally distributed
+# plot the cleaned data again
+scatterplot(cleaned_data$price, cleaned_data$age,
+     ylab="Price Sold in $", xlab="Age of Car",
+     pch=19, cex=0.2)
+```
+```{r}
+# use the correlation matrix plot to check linear association and distribution
+ggpairs(cleaned_data,
+        upper=list(continuous=wrap("points", alpha=0.3, size=0.1)),
+        lower=list(continuous=wrap('cor', size=4)))
+# age normally distributed
+# price right skewed, need log transformation
+# some negative linear association as r = -0.357
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
