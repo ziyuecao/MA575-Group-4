@@ -1,0 +1,114 @@
+---
+title: "Lab 2 model_Catherine"
+output: html_document
+date: "2024-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+sold_at_split <- strsplit(bmw$sold_at, "/")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+setwd("/Users/caoziyue/Desktop/ma575/")
+bmw <- read.csv("BMWpricing_updated.csv")
+summary(bmw)
+```
+
+
+```{r}
+sold_at_split <- strsplit(bmw$sold_at, "/")
+
+registration_split <- strsplit(bmw$registration_date, "/")
+
+# assign month only; all sold in 2018
+bmw$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+
+bmw$year_sold <- sapply(sold_at_split, function(x) as.integer(x[3]))
+
+bmw$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+
+bmw$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+price <- bmw$price # our y variable
+engine_power <- bmw$engine_power # our x variable
+
+length(price)
+length(engine_power)
+```
+
+```{r}
+m2 <- lm(price~engine_power)
+summary(m2)
+```
+
+```{r}
+# check the distribution of 2 variables
+summary(engine_power) # mean > median, potentially right-skewed
+summary(price) # mean > median, potentially right-skewed
+scatterplot(engine_power, price,
+     ylab="Price Sold in $", xlab="Engine Power",
+     pch=19, cex=0.2)
+# boxplot shows both variable is not normally distributed, scatterplot detects extreme outliers
+```
+
+```{r}
+scatterplot(engine_power, log(price),
+     xlab="Engine Power", ylab=" log of Price Sold in $", 
+     pch=19, cex=0.2)
+```
+
+
+```{r}
+# make a new dataframe for cleaning outlier
+model_data <- data.frame(engine_power = engine_power, price = price)
+# Use leverage to check the outlier
+lev <- hatvalues(m2)
+model_data$filter1 <- lev <= (4/length(engine_power))
+# use z-score for residuals to check the outliers
+resid = residuals(m2)
+z_resid = (resid - mean(resid))/sd(resid)
+model_data$filter2 <- abs(z_resid)<=3
+cleaned_data <- model_data[model_data$filter1 != FALSE & model_data$filter2 != FALSE, ]
+cleaned_data <- cleaned_data[, -3:-4]
+```
+
+```{r}
+summary(cleaned_data$price)
+summary(cleaned_data$engine_power)
+# plot the cleaned data (without outlieers)
+scatterplot(cleaned_data$engine_power, cleaned_data$price,
+     ylab="Price Sold in $", xlab="Engine power of Car",
+     pch=19, cex=0.2)
+```
+
+```{r}
+# use the correlation matrix plot to check linear association and distribution
+ggpairs(cleaned_data,
+        upper=list(continuous=wrap("points", alpha=0.3, size=0.1)),
+        lower=list(continuous=wrap('cor', size=4)))
+# age normally distributed
+# price right skewed, need log transformation
+# some negative linear association as r = -0.357
+
+```
+
+```{r}
+# check correlation between age and engine power - almost no correlation
+age <- bmw$year_sold-bmw$year_registered + (1/12)*(bmw$month_sold - bmw$month_registered)
+scatterplotMatrix(~ age + engine_power,
+                  pch=19, cex=0.1)
+```
+
+
+
