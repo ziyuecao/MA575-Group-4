@@ -1,0 +1,69 @@
+---
+title: "Lab 2 - James - Correlations B/W Price and Other Predictors"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+bmw <- read.csv("C:/Users/Temporality/Documents/College & University/Boston University/Spring 2024/MA 575/Laboratory/Project/Data Exploration/BMW-pricing.csv")
+summary(bmw)
+```
+
+
+```{r}
+sold_at_split <- strsplit(bmw$sold_at, "/")
+
+registration_split <- strsplit(bmw$registration_date, "/")
+
+# assign month only; all sold in 2018
+bmw$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+
+bmw$year_sold <- sapply(sold_at_split, function(x) as.integer(x[3]))
+
+bmw$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+
+bmw$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+```
+
+
+```{r}
+bmw <- subset(bmw, select = -c(maker_key, registration_date, obs_type, year_sold))
+```
+
+```{r}
+response <- "price"
+predictors <- c("mileage", "fuel", "paint_color", "car_type", "feature_1", "feature_2", "feature_3", "feature_4", "feature_5", "feature_6", "feature_7", "feature_8", "year_registered", "month_registered")
+bmw_subset <- subset(bmw, select = c(response, predictors))
+```
+
+```{r}
+for (predictor in predictors) {
+  # Subset the dataframe for the current predictor variable
+  plot_data <- subset(bmw_subset, select = c(response, predictor))
+  
+  # Create a scatterplot/correlation graph
+  g <- ggpairs(plot_data, 
+        title = paste("Scatterplot and correlation for price and", predictor), 
+        upper = list(continuous = wrap("points", alpha=0.3, size=0.1)), 
+        lower = list(continuous = "cor", method = "spearman")) + theme(axis.text = element_text(size = 6))
+  
+  # Print the graph
+  print(g)
+}
+```
