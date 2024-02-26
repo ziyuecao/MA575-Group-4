@@ -49,34 +49,36 @@ length(age)
 ```{r}
 m1 <- lm(price~age)
 summary(m1)
+plot(age, price, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m2, col = 'red')
+summary(m1)$r.squared
 ```
 ```{r}
 # check the distribution of 2 variables
 summary(age) # mean > median, potentially right-skewed
 summary(price) # mean > median, potentially right-skewed
-scatterplot(price, age,
+scatterplot(age, price,
      ylab="Price Sold in $", xlab="Age of Car",
      pch=19, cex=0.2)
 # boxplot shows both variable is not normally distributed, scatterplot detects extreme outliers
 
 # make a new dataframe for cleaning outlier
-model_data <- data.frame(age = age, price = price)
+model_data <- data.frame(age = bmw_dataage, price = price)
 # Use leverage to check the outlier on age of cars
 lev <- hatvalues(m1)
 model_data$filter1 <- lev <= (4/length(age))
 # use z-score for residuals to check the outliers for age of cars
 resid = residuals(m1)
 z_resid = (resid - mean(resid))/sd(resid)
-model_data$filter2 <- abs(z_resid)<=3
 cleaned_data <- model_data[filter1 != FALSE & filter2 != FALSE, ]
 cleaned_data <- cleaned_data[, -3:-4]
 ```
 
 ```{r}
 summary(cleaned_data$price) # almost normally distributed
-summary(cleaned_data$age) # almost normally distributed
+summary(cleaned_data$age)# almost normally distributed
 # plot the cleaned data again
-scatterplot(cleaned_data$price, cleaned_data$age,
+scatterplot(cleaned_data$age, cleaned_data$price,
      ylab="Price Sold in $", xlab="Age of Car",
      pch=19, cex=0.2)
 ```
@@ -88,6 +90,36 @@ ggpairs(cleaned_data,
 # age normally distributed
 # price right skewed, need log transformation
 # some negative linear association as r = -0.357
-
+m2 <- lm(cleaned_data$price~cleaned_data$age)
+summary(m2)
+plot(cleaned_data$age, cleaned_data$price, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m2, col = 'red')
+summary(m2)$r.squared
 ```
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# now apply log transformation to y and check the predictability of the model
+logprice = log(price)
+m3 <- lm(logprice~age)
+plot(age, logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m3, col = 'red')
+summary(m3)$r.squared
+```
+```{r}
+# now apply log transformation to cleaned dataset on y and check the predictability of the model
+c_logprice = log(cleaned_data$price)
+c_age = cleaned_data$age
+m4 <- lm(c_logprice~c_age)
+plot(c_age, c_logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m4, col = 'red')
+summary(m3)$r.squared
+text(5, 80, 'R^2 = 0.3316', adj = 0, cex = 0.7)
+```
+
+```{r}
+# 
+c_logprice = log(cleaned_data$price)
+c_age = cleaned_data$age
+m3 <- lm(c_logprice~c_age)
+plot(c_age, c_logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m3, col = 'red')
+```
