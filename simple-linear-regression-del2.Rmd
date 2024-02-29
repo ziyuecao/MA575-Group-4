@@ -2,7 +2,7 @@
 title: "MA575 Deliverable2"
 author: "Rui Gong"
 date: "2024-02-23"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -39,20 +39,14 @@ bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x
 bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
 
 price <- bmw_data$price # our y variable
-age <- bmw_data$year_sold-bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered) # our x variable
+bmw_data$age <- bmw_data$year_sold-bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered) # our x variable
+age <- bmw_data$age
 
 length(price)
 length(age)
 ```
 
 
-```{r}
-m1 <- lm(price~age)
-summary(m1)
-plot(age, price, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
-abline(m2, col = 'red')
-summary(m1)$r.squared
-```
 ```{r}
 # check the distribution of 2 variables
 summary(age) # mean > median, potentially right-skewed
@@ -63,25 +57,45 @@ scatterplot(age, price,
 # boxplot shows both variable is not normally distributed, scatterplot detects extreme outliers
 
 # make a new dataframe for cleaning outlier
-model_data <- data.frame(age = bmw_dataage, price = price)
+model_data <- data.frame(age = age, price = bmw_data$price)
 # Use leverage to check the outlier on age of cars
+m1 <- lm(price~age)
 lev <- hatvalues(m1)
 model_data$filter1 <- lev <= (4/length(age))
 # use z-score for residuals to check the outliers for age of cars
 resid = residuals(m1)
 z_resid = (resid - mean(resid))/sd(resid)
-cleaned_data <- model_data[filter1 != FALSE & filter2 != FALSE, ]
+model_data$filter2 <- z_resid > (-3) & z_resid < 3
+cleaned_data <- model_data[model_data$filter1 != FALSE & model_data$filter2 != FALSE, ]
 cleaned_data <- cleaned_data[, -3:-4]
 ```
+Here we use leverage score and z-score of residual to find potential outliers and bad leverage points, and filter them out. After cleaning, the clustering problem in the data is solved (shown on the next graph), and the not skewed distributed variables become nearly normal. We lost 411 data points through cleaning. 
 
 ```{r}
-summary(cleaned_data$price) # almost normally distributed
+summary(cleaned_data) # almost normally distributed
 summary(cleaned_data$age)# almost normally distributed
+summary(cleaned_data$price)# almost normally distributed
 # plot the cleaned data again
 scatterplot(cleaned_data$age, cleaned_data$price,
      ylab="Price Sold in $", xlab="Age of Car",
      pch=19, cex=0.2)
+length(cleaned_data$age)-length(age)
 ```
+```{r}
+summary(age)
+summary(price)
+summary(m1)
+scatterplot(age, price,
+     ylab="Price Sold in $", xlab="Age of Car",
+     pch=19, cex=0.2)
+abline(m1, col = 'red')
+summary(m1)$r.squared
+par(mfrow = c(2,2))
+plot(m1, cex = 1, pch = 5)
+```
+Our first model is simply using age as x variable and price as y variable. We set this as the benchmark predicability.
+R^2 is 0.1987 which means approximately 19.87% of variations in price is explained by the model. The NQQ plot shows great deviation from normal quantile, indicating data on the upper tail is highly skewed. A U-shape pattern is identified in the SR plot, indicating non-constant variance. Several points with high leverage is observed, but no potential bad leverage point detected, since all leverage points lies in the Cook distance. The model need improvements on the above mentioned issues.
+
 ```{r}
 # use the correlation matrix plot to check linear association and distribution
 ggpairs(cleaned_data,
@@ -95,7 +109,11 @@ summary(m2)
 plot(cleaned_data$age, cleaned_data$price, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
 abline(m2, col = 'red')
 summary(m2)$r.squared
+par(mfrow = c(2,2))
+plot(m2, cex = 1, pch = 5)
 ```
+Our second experiment model is age vs price after cleaning. The r^2 is 0.1273, which is significantly lower than the model without cleaning. There is still large deviation on both tails from quantile of normal distribution on the NQQ plot. SR and leverage points has much improved.
+
 ```{r}
 # now apply log transformation to y and check the predictability of the model
 logprice = log(price)
@@ -103,7 +121,11 @@ m3 <- lm(logprice~age)
 plot(age, logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
 abline(m3, col = 'red')
 summary(m3)$r.squared
+par(mfrow = c(2,2))
+plot(m3, cex = 1, pch = 5)
 ```
+After taking log on the y variable, price, deviation from normal became worse on the NQQ plot. Patterns in the scatterplot has much improved, with clear linearity observed. Patterns in the SR plot has improved as well, and number of high leverage point is greatly reduced. R^2 at 0.3735 shows improvements in the predicability.
+
 ```{r}
 # now apply log transformation to cleaned dataset on y and check the predictability of the model
 c_logprice = log(cleaned_data$price)
@@ -111,15 +133,63 @@ c_age = cleaned_data$age
 m4 <- lm(c_logprice~c_age)
 plot(c_age, c_logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
 abline(m4, col = 'red')
-summary(m3)$r.squared
-text(5, 80, 'R^2 = 0.3316', adj = 0, cex = 0.7)
+summary(m4)$r.squared
+par(mfrow = c(2,2))
+plot(m4, cex = 1, pch = 5)
+# cleaned data has significanly lower r-squared value, considering not using the cleaned data
 ```
+After doing log transform on age on the cleaned data, the above identified issue didn't improved much. Improvements shows in NQQ plot, with deviation only shown in the lower tail, and upper tail become approximately normal. Patterns in the SR plot has become worse, few points with extreme negative SR shows in the bottom half, and most point has positive SR, which is a position we don't want.The R^2 at 0.0831 comfirm our observation that the predicability of model has been reduced. We would potentially drop the cleaned data.
 
 ```{r}
-# 
-c_logprice = log(cleaned_data$price)
-c_age = cleaned_data$age
-m3 <- lm(c_logprice~c_age)
-plot(c_age, c_logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
-abline(m3, col = 'red')
+# has seen worsen prediction power in the cleaned data... now get back to the original data
+# apply log transformation to both x and y and test the model
+logprice = log(price)
+logage = log(age)
+m5 <- lm(logprice~logage)
+plot(logage, logprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m5, col = 'red')
+summary(m5)$r.squared
+par(mfrow = c(2,2))
+plot(m5, cex = 1, pch = 5)
 ```
+Some patterns shows in the residual plot, but overall is pretty good (mean residual near 0, and little pattern is observed). Non-linear pattern oberved on the scatterplot. Normal QQ plot shows improvement in the middle part of the data, and the tail and bottoms has more deviations than before. Maybe because of the increase deviation on the tails, R^2 has been reduced to 0.3122 compared to the model with log transformation only on y. 
+
+```{r}
+# has seen worsen prediction power in the cleaned data... now get back to the original data
+# apply log transformation to both x and y and test the model
+rootprice = price^0.25
+age = age
+m6 <- lm(rootprice~age)
+plot(age, rootprice, col = rgb(0,0,0, alpha = 0.5), cex = 0.1)
+abline(m6, col = 'red')
+summary(m6)$r.squared
+par(mfrow = c(2,2))
+plot(m6, cex = 1, pch = 5)
+```
+Then we tried take 1/4 root of price, this model is okay with R^2 at 0.3545. But there is pattern in the SR plot, which is not an ideal model because constant variance was violated.
+
+As discussed above, doing log transformation only on y is the best choice for our simple linear regression. Choose this as our regression model for further analysis.
+
+
+```{r}
+bmw_model = data.frame(age, logprice)
+plot(density(age))
+abline(v = mean(age), col ='red')
+abline(v = mean(age)-3*sd(age), col ='purple')
+abline(v = mean(age)+3*sd(age), col ='purple')
+plot(density(log(price)))
+abline(v = mean(logprice), col ='red')
+abline(v = mean(logprice)-3*sd(logprice), col ='purple')
+abline(v = mean(logprice)+3*sd(logprice), col ='purple')
+```
+both x and logy variable is highly skewed in the dataset, where x is rightskewed and logy is left skewed. We may address it in further analysis in the next deliverable.
+
+
+```{r}
+summary(m3)
+anova(m3)
+```
+The coefficient is:
+T value is:
+P value is:
+
