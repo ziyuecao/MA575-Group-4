@@ -1,0 +1,169 @@
+---
+title: "mlr-del3"
+author: "Rui Gong"
+date: "2024-03-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+```
+
+```{r}
+# Read updated dataset
+bmw_data <- read.csv("/Users/rui/OneDrive/Documents/BU/MA575 Linear Models/Labs/Lab2/BMW Price Data/BMW-pricing.csv", header=TRUE, as.is=TRUE)
+# create summary
+summary(bmw_data)
+```
+
+```{r}
+# Data Preparation
+# check missing values and inappropriate values
+# min mileage is -64, which doesn't make sense for any value less than 0
+# min engine power is 0, which doesn't make sense for any value less or equal to 0
+# replace negative mileage with NA
+summary(bmw_data)
+# notice only two observations are marked as NAs in the dataset
+```
+```{r, echo = FALSE}
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(bmw_data$sold_at, "/")
+registration_split <- strsplit(bmw_data$registration_date, "/")
+
+# assign month only; all sold in 2018
+bmw_data$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+bmw_data$year_sold <- sapply(sold_at_split, function(x) as.integer(x[3]))
+bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+price <- bmw_data$price # our y variable
+bmw_data$age <- bmw_data$year_sold-bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered) # our x variable
+age <- bmw_data$age
+```
+
+```{r}
+# apply histogram to check for distribution and implausible values
+# since we decide log(price)~age is the best model for relationship between price and age, we will use log(price) in the histogram and scatterplot
+par(mfrow = c(2, 2))
+hist(bmw_data$mileage) # right skewed
+hist(bmw_data$engine_power) # right skewed
+hist(bmw_data$age) # right skewed
+hist(log(bmw_data$price)) # left skewed
+
+hist(bmw_data$price^0.25) # approximately normal
+```
+
+
+```{r}
+# some interesting explorations here
+par(mfrow = c(2, 1))
+barplot(table(bmw_data$paint_color))
+barplot(table(bmw_data$model_key))
+barplot(table(bmw_data$fuel))
+barplot(table(bmw_data$car_type))
+
+# first start with model key
+names(table(bmw_data$model_key))[which.max(table(bmw_data$model_key))]
+max(table(bmw_data$model_key))
+# the most popular model is bmw 320, which is sold 752 times in the dataset
+
+# create a new dataframe, sort the model_keys by frequencies, and append them side by side
+models <- sort(table(bmw_data$model_key))
+models_names <- names(models)
+frequencies <- as.vector(models)
+models = cbind(models_names, frequencies)
+# second most popular model is bmw 520, sold 633 times
+# third most popular model is bmw 318, sold 569 times
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=model_key, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Model_keys")
+
+# second explore the car type
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=car_type, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Car_type")
+# mean price of couple is the highest, SUV the second highest
+# mean price of subcompact is the lowest
+# non-constant variance detected across car type
+
+# third explore paint color
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=paint_color, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+# fourth group age into categories and study it's distribution
+bmw_data$age_cat <- cut(bmw_data$age, breaks = c(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20))
+ggplot(bmw_data, aes(x=age_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x=age_cat, y=log(price))) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+ggplot(bmw_data, aes(x=paint_color, y=age_cat)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+bmw_data$engine_cat <- cut(bmw_data$engine_power, breaks = c(0, 100, 200, 300, 600), labels = c('low', 'medium', 'high', 'very high'))
+ggplot(bmw_data, aes(x= engine_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x= engine_cat, y=age)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x= engine_cat, y= mileage)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+```
+```{r}
+par(mfrow = c(1, 3))
+plot(bmw_data$age, bmw_data$mileage, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$engine_power, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$price^0.25, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$engine_power, bmw_data$price, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$price, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$price, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$engine_power, bmw_data$mileage, pch=19, cex=0.2)
+plot(bmw_data$engine_power, bmw_data$age, pch=19, cex=0.2)
+plot(bmw_data$engine_power, bmw_data$price, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$mileage, bmw_data$engine_power, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$age, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$price, pch=19, cex=0.2)
+```
+
+```{r}
+# after exploration, we are ready to build the models
+# define dependent variable and independent variables
+logy <- log(bmw_data$price)
+y <- bmw_data$price
+x1 <- bmw_data$age
+x2 <- bmw_data$engine_power
+x3 <- bmw_data$mileage
+# regular model with log price and normal age, enginepower, mileage
+m.mls <- lm(logy~x1+x2+x3)
+# regular model with log price and normal age, enginepower, mileage, include interaction term between age and mileage because the linear pattern in scatterplot of age and mileage
+m.interact <- lm(logy~x1+x2+x3+x1*x3)
+# taking square root of age and enginepower, and mileage becuase the right skewness, and include interaction term
+m.root_interact <- lm(logy~sqrt(x1)+sqrt(x2)+sqrt(x3)+x1*x3) # best model in multiple regression
+summary(m.mls)
+summary(m.interact)
+summary(m.root_interact)
+par(mfrow = c(2,2))
+plot(m.mls)
+par(mfrow = c(2,2))
+plot(m.interact)
+summary(m.interact)
+par(mfrow = c(2,2))
+plot(m.root_interact)
+summary(m.root_interact)
+```
