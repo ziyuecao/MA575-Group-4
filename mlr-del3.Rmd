@@ -18,14 +18,23 @@ library(tinytex)
 bmw_data <- read.csv("/Users/rui/OneDrive/Documents/BU/MA575 Linear Models/Labs/Lab2/BMW Price Data/BMW-pricing.csv", header=TRUE, as.is=TRUE)
 # create summary
 summary(bmw_data)
+# checking missing values
+sum(is.na(bmw_data))
+# no missing values
+
+# check inappropriate values
+# min mileage is -64, which doesn't make sense for any value less than 0
+# min engine power is 0, which doesn't make sense for any value less or equal to 0
+print(which(bmw_data$mileage < 0))
+# row 2939 has negative mileage values - need to delete
+bmw_data <- bmw_data[-which(bmw_data$mileage < 0),]
+# engine power = 0 also doesn't make sense
+print(which(bmw_data$engine_power == 0))
+# row 3765 has 0 engine power values - need to delete
+bmw_data <- bmw_data[-which(bmw_data$engine_power == 0),]
 ```
 
 ```{r}
-# Data Preparation
-# check missing values and inappropriate values
-# min mileage is -64, which doesn't make sense for any value less than 0
-# min engine power is 0, which doesn't make sense for any value less or equal to 0
-# replace negative mileage with NA
 summary(bmw_data)
 # notice only two observations are marked as NAs in the dataset
 ```
@@ -52,9 +61,19 @@ par(mfrow = c(2, 2))
 hist(bmw_data$mileage) # right skewed
 hist(bmw_data$engine_power) # right skewed
 hist(bmw_data$age) # right skewed
-hist(log(bmw_data$price)) # left skewed
+hist(bmw_data$price) # right skewed
 
-hist(bmw_data$price^0.25) # approximately normal
+par(mfrow = c(2, 2))
+hist(sqrt(bmw_data$price)) # still right skewed
+hist(sqrt(bmw_data$engine_power)) # slightly right skewed
+hist(sqrt(bmw_data$age)) # approximately normal
+hist(sqrt(bmw_data$mileage))# approximately normal
+
+par(mfrow = c(2, 2))
+hist(log(bmw_data$price)) # approximately normal
+hist(bmw_data$engine_power^0.25) # approximately normal
+hist(sqrt(bmw_data$age)) # approximately normal
+hist(sqrt(bmw_data$mileage))# approximately normal
 ```
 
 
@@ -149,15 +168,54 @@ y <- bmw_data$price
 x1 <- bmw_data$age
 x2 <- bmw_data$engine_power
 x3 <- bmw_data$mileage
+m.ols <- lm(logy~x1)
 # regular model with log price and normal age, enginepower, mileage
 m.mls <- lm(logy~x1+x2+x3)
 # regular model with log price and normal age, enginepower, mileage, include interaction term between age and mileage because the linear pattern in scatterplot of age and mileage
 m.interact <- lm(logy~x1+x2+x3+x1*x3)
 # taking square root of age and enginepower, and mileage becuase the right skewness, and include interaction term
 m.root_interact <- lm(logy~sqrt(x1)+sqrt(x2)+sqrt(x3)+x1*x3) # best model in multiple regression
+
+# Diagnostics for the three test models
+# logy = x1 + x2 + x3
 summary(m.mls)
+# coefficients for mls
+summary(m.mls)$coefficients
+# r^2 for mls
+summary(m.mls)$r.squared
+
+# logy = x1 + x2 + x3 + x1*x3
 summary(m.interact)
+# coefficients for mls with interaction
+summary(m.interact)$coefficients
+# r^2 for mls with interaction
+summary(m.interact)$r.squared
+
+# logy = sqrt(x1) + sqrt(x2) + sqrt(x3) + x1*x3
 summary(m.root_interact)
+# coefficients for root mls with interaction
+summary(m.root_interact)$coefficients
+# r^2 for root mls with interaction
+summary(m.root_interact)$r.squared
+```
+Interpretation:
+Coefficients:
+Significance of Coefficient:
+
+
+
+```{r}
+# Diagnostic of test models
+# those are selected models, so all assumptions are met for these models
+# including:
+# linearity of mean
+# constant variance of residual with no patterns 
+# normally distributed response and covariates
+
+# independent covariate is off because there is an linear relationship between age and mileage show in the scatterplot, so interaction term included to reduce the influence
+par(mfrow = c(2,2))
+plot(m.ols)
+# m.mls is 
 par(mfrow = c(2,2))
 plot(m.mls)
 par(mfrow = c(2,2))
@@ -166,4 +224,10 @@ summary(m.interact)
 par(mfrow = c(2,2))
 plot(m.root_interact)
 summary(m.root_interact)
+
+# rank the prediction power
+r2_adj = c(summary(m.ols)$adj.r.squared, summary(m.mls)$adj.r.squared, summary(m.interact)$adj.r.squared, summary(m.root_interact)$adj.r.squared)
+names = c('OLS', 'MLS', 'MLS with Interaction', 'Root MLS with Interaction')
+data.frame(names, r2_adj)
+# root MLS with interaction has highest prediction power at about 61.79%
 ```
