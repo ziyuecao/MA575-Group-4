@@ -669,4 +669,16 @@ summary(mlr_4_v2)
 plot(mlr_4_v2)
 ```
 
-Despite our lump-sum removal of 311 outliers, our model hasn't improve significantly. Not only does this inform us that simply removing terms based on their leverage is not meaningful, but it also shows the danger of removing many data points simply in hopes of improving a model's reported statistics. We need to be more precise in the way we improve our model. Currently, our model seems roughly "capped" at an adjusted $R^2$ of $\sim 0.8$.
+Despite our lump-sum removal of 311 outliers, our model hasn't improve significantly. Not only does this inform us that simply removing terms based on their leverage is not meaningful, but it also shows the danger of removing many data points simply in hopes of improving a model's reported statistics. We need to be more precise in the way we improve our model. Currently, our model seems roughly "capped" at an adjusted $R^2$ of $\sim 0.8$. That said, we haven't yet included interaction terms.
+
+```{r}
+mlr_4_v3 <-  lm(formula = price ~
+              engine_power + age + model_key + car_type + mileage
+              + feature_4 + feature_6 + feature_8 +
+              + engine_power:car_type:feature_8 + age:mileage,
+              data = bmw_data_reduced)
+summary(mlr_4_v3)
+plot(mlr_4_v3)
+```
+
+Now we see that we have improved the model once again by included interaction terms between car type and engine power and Feature 8 *and also* age and mileage. These interactions we chose were inspired by the correlations that could be seen in our correlation matrices. Age and mileage tend to increase together, and all of engine power, Feature 8, and car type tend to predict each other as well. We now have a more normal Q-Q plot where none of the standardized residuals nearly reach $+10$ as before.
