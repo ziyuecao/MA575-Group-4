@@ -21,7 +21,8 @@ library(corrplot)
 
 ```{r}
 # read updated dataset
-bmw_data <- read.csv("./BMW-pricing.csv", header=TRUE, as.is=TRUE)
+# bmw_data <- read.csv("./BMW-pricing.csv", header=TRUE, as.is=TRUE) # James's directory
+bmw_data <- read.csv('/Users/rui/OneDrive/Documents/BU/MA575 Linear Models/Labs/Lab2/BMW Price Data/BMW-pricing.csv') # Rui's directory
 
 # create summary
 summary(bmw_data)
@@ -284,6 +285,8 @@ ggplot(bmw_data, aes(x=model_key, y=price, fill=car_type)) +
   ggtitle("Price Distribution Across BMW Models Sorted by Decreasing Mean Price") +
   scale_fill_brewer(palette="Pastel1")
 ```
+Non-constant variance of price is present in car models. Expensive models have higher price variance and cheap models have lower price variance (which makes sense).
+
 
 ## Car type (e.g., sedan, hatchback)
 
@@ -420,6 +423,7 @@ plotModelAndResiduals <- function(x, y, x_name, y_name) {
        xlab = x_name, 
        ylab = y_name, 
        pch = 19, 
+       cex = 0.5,
        col = "blue")
   abline(model, col = "red")
   
@@ -436,6 +440,7 @@ plotModelAndResiduals <- function(x, y, x_name, y_name) {
        xlab = x_name, 
        ylab = "Standardized Residuals", 
        pch = 19, 
+       cex = 0.5,
        col = "darkgreen")
   
   # Adding a horizontal line at 0 in the residuals plot
@@ -478,6 +483,10 @@ print(length(bmw_data_above$model_key))
 
 When observing the 4 major outliers present in this model, we note that they are all relatively young, all have Feature 8, none have Feature 6, and most have Feature 1 and Feature 2 and yet don't have Feature 3 or Feature 4. All are different models with varying mileage (4,530 - 103,222). Three of the cars are SUVs. They make up $\sim 0.1\%$ of our data, yet with the maximal standardize residual of 22.9, they have a disproportionately high effect
 on our model. for that reason, we remove them all.
+
+Rui 03/15/24
+Does these prices make sense?
+For example, observation #4685 a BMW X4 4 years old at sold time sold for 142800 doesn't make sense to me...
 
 ```{r}
 bmw_data_cleaned <- bmw_data[-indices_above, ]
@@ -552,7 +561,7 @@ plot(mlr_all)
 ```
 We observe that when plotting a naive MLR with all features we have a quadratic pattern in the plain and square-rooted standardized residuals and several points are marked as outliers, chief amongst them being
 entries 3733, 2679, and 3321. We also see that the points 56, 107, 1899, 2925, 3153, 4798, 4799, and 4820 have
-reported leverages of **1** and thereforee were not plotted by R. Before we spend time inquiring further, we must whittle down our model to the most important features and consider transformations.
+reported leverages of **1** and therefore were not plotted by R. Before we spend time inquiring further, we must whittle down our model to the most important features and consider transformations.
 
 According to the summary output, all features but Feature 2 ($p \approx 0.99$) and Feature 5 $(p \approx 0.2)$ were significant. No colors had any significance. Month sold does interestingly have some significance in the
 event of it being September ($p \approx 0.03$) or August ($p \approx 0.095$).
@@ -634,11 +643,20 @@ As we have done transformations and analysis of various models, we should now co
 # accumulated outliers for mlr_4 based on leverage and diagnostic graphs
 outlier_indices <- c(56, 107, 1899, 2925, 3153, 3600, 4798, 4799, 4820, 4821, 2679,
                      3596, 3733, 73, 4147)
+bmw_outlier <- bmw_data[outlier_indices, ]
+# print the dataframe that contains outliers and check each observation if it make sense
+bmw_outlier
+
 ```
 
 To remove outliers, we set a threshold of $\frac{10\cdot p}{n}$ where $p$ is the number of parameters
 and $n$ is the number of observations (our sample size). We then unionize the resulting high-leverage
 data points with our prior outliers.
+
+Rui 3/15/24
+actually I don't understand why these observations are outliers, their price and feature combination looks pretty normal to me. 
+
+But I think there is a reson why they are outliers, they might deviate from the mean price a lot in their car model group.
 
 ```{r}
 leverages <- hatvalues(mlr_4)
