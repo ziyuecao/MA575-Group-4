@@ -1,0 +1,874 @@
+---
+title: "Multiple Linear Regression Development"
+author: "James Davin, Rui Gong"
+date: "2024-03-13"
+output: pdf_document
+---
+
+# Necessary library setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+library(dplyr)
+library(corrplot)
+```
+
+# Reading and summarizing the data we'll be working with
+
+```{r}
+# read updated dataset
+# bmw_data <- read.csv("./BMW-pricing.csv", header=TRUE, as.is=TRUE) # James's directory
+bmw_data <- read.csv('/Users/rui/OneDrive/Documents/BU/MA575 Linear Models/Labs/Lab2/BMW Price Data/BMW-pricing.csv') # Rui's directory
+
+# create summary
+summary(bmw_data)
+```
+
+# Data cleaning
+
+```{r}
+# checking missing values (we observe 0)
+sum(is.na(bmw_data))
+```
+
+Because we are not splitting our data into training/testing/validation nor engaging in machine learning, we remove the irrelevant "obs_type" (*observation type*) column.
+
+```{r}
+bmw_data$obs_type <- NULL
+```
+
+We find inappropriate values for mileage and engine power.
+
+```{r}
+# we check for inappropriate values
+# min mileage should be 0; we get the index of those which are below 0
+print(which(bmw_data$mileage < 0))
+# min engine power is 0, but it should be > 0; we get the index of those which are below 0
+print(which(bmw_data$engine_power <= 0))
+# print the number of observations
+print(length(bmw_data$mileage))
+```
+
+Owing to their relatively small total size of the data set and the extensive amount of time required to correctly impute the values for mileage and engine power, we opt to remove the entries with inappropriate observations. The number of entries reduces by 2.
+
+```{r}
+# row 2939 has negative mileage values -- we opt to delete it
+bmw_data <- bmw_data[-which(bmw_data$mileage < 0),]
+# row 3765 has 0 engine power values -- we opt to delete it
+bmw_data <- bmw_data[-which(bmw_data$engine_power == 0),]
+# we should now have 4843 - 2 = 4831 observations
+print(length(bmw_data$mileage))
+```
+
+The registration date by itself is not easily used in computations, so we use to create new features "age", "month_sold", "month_registered", and "year_registered". Note that all vehicles were sold during the same year (2018).
+
+```{r}
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(bmw_data$sold_at, "/")
+registration_split <- strsplit(bmw_data$registration_date, "/")
+
+# create field specifying month sold
+bmw_data$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+# create field specifying month registered
+bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+# create field specifying year registered
+bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+# create a field specifying age of each car 
+bmw_data$age <- 2018 - bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered)
+```
+
+```{r}
+summary(bmw_data)
+```
+
+# Data exploration (and continued cleaning)
+
+## Exploration of fuel partitioning
+
+First we examine how fuel type influences key variables.
+
+```{r}
+# partition the data by fuel type
+bmw_fuel <- split(bmw_data, bmw_data$fuel)
+bmw.diesel <- bmw_fuel$diesel
+bmw.petrol <- bmw_fuel$petrol
+bmw.hybrid <- bmw_fuel$hybrid_petrol
+bmw.electric <- bmw_fuel$electro
+```
+
+We see that diesel is by far the most common type of fuel used by the sample.
+
+```{r}
+print(nrow(bmw.diesel))
+print(nrow(bmw.petrol))
+print(nrow(bmw.electric))
+print(nrow(bmw.hybrid))
+```
+
+Electric and hybrid BMWs make up $11 / 4,639 \approxeq0.23\%$ of the dataset. Because of that, they lack sufficient information to develop scatterplots for, and we preclude them from our scatterplot analysis (R threw errors when attempted).
+
+
+```{r}
+# create scatterplot matrices to study the distribution
+scatterplotMatrix(~ bmw.diesel$age + bmw.diesel$engine_power + bmw.diesel$mileage + bmw.diesel$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.petrol$age + bmw.petrol$engine_power + bmw.petrol$mileage + bmw.petrol$price,
+                  pch=19, cex=0.1)
+# comparison group
+scatterplotMatrix(~ bmw_data$age + bmw_data$engine_power + bmw_data$mileage + bmw_data$price,
+                  pch=19, cex=0.1)
+
+```
+
+## Exploration of age partitioning
+
+```{r}
+bmw_data$age_class <- cut(bmw_data$age,
+                      breaks = c(0, 2, 4, 8, 16, Inf),
+                      labels = c("youngest", "young", "average", "old", "oldest"))
+
+bmw_age<- split(bmw_data, bmw_data$age_class)
+bmw.youngest <- bmw_age$youngest
+bmw.young <- bmw_age$young
+bmw.average <- bmw_age$average
+bmw.old <- bmw_age$old
+bmw.oldest <- bmw_age$oldest
+bmw.ancient <- bmw_age$ancient
+```
+
+We see that we have quite a low number of "youngest" (0-2 years) and "oldest" (\> 16 years) cars ($\sim 2\%$ of the sample) and cars of "average" age (4-8 years) are by far the common age ($\sim 66\%$ of the sample).
+
+```{r}
+print(nrow(bmw.youngest))
+print(nrow(bmw.young))
+print(nrow(bmw.average))
+print(nrow(bmw.old))
+print(nrow(bmw.oldest))
+```
+
+### Scatterplots by age partition
+
+```{r}
+scatterplotMatrix(~ bmw.youngest$price + bmw.youngest$engine_power + bmw.youngest$mileage + bmw.youngest$age,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.young$price + bmw.young$engine_power + bmw.young$mileage + bmw.young$age ,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.average$price + bmw.average$engine_power + bmw.average$mileage + bmw.average$age,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.old$price + bmw.old$engine_power + bmw.old$mileage + bmw.old$age,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.oldest$price + bmw.oldest$engine_power + bmw.oldest$mileage + bmw.oldest$age,
+                  pch=19, cex=0.1)
+```
+
+Interestingly, we see that engine power seems the most consistently linear predictor of price across the various age brackets. The youngest and oldest brackets are hardest to see correlations (linear or not) in between price and the other variables. We also see that mileage has a more pronounced negative correlation with price across all age brackets.
+
+# Observing the effects transformations on distributions
+
+```{r}
+par(mfrow = c(2, 2))
+hist(bmw_data$mileage) # right skewed
+hist(bmw_data$engine_power) # right skewed
+hist(bmw_data$age) # right skewed
+hist(bmw_data$price) # right skewed
+
+par(mfrow = c(2, 2))
+hist(sqrt(bmw_data$price)) # still right skewed
+hist(sqrt(bmw_data$engine_power)) # slightly right skewed
+hist(sqrt(bmw_data$age)) # slightly right skewed
+hist(sqrt(bmw_data$mileage))# approximately normal (BEST FIT)
+
+par(mfrow = c(2, 2))
+hist(bmw_data$price^0.25) # approximately normal (BEST FIT)
+hist(bmw_data$engine_power^0.25) # slightly right skewed
+hist(bmw_data$age^0.25) # approximately normal
+hist(bmw_data$mileage^0.25) # slightly left skewed
+
+par(mfrow = c(2, 2))
+hist(log(bmw_data$price)) # slightly left skewed
+hist(log(bmw_data$engine_power)) # slightly right skewed (BEST FIT)
+hist(log(bmw_data$age)) # approximately normal (BEST FIT)
+hist(log(bmw_data$mileage)) # left skewed
+```
+
+# Frequency graphs
+
+## Paint color
+
+```{r}
+# count the frequency of each paint color and arrange in descending order
+paints_df <- bmw_data %>%
+  count(paint_color)
+
+# create a bar plot showing the frequency of each paint color
+# use reorder for x to match the order by n
+ggplot(paints_df, aes(x=reorder(paint_color, n, decreasing = TRUE), y=n)) +
+  geom_bar(stat = "identity", fill="lightblue") + # adding bars
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=12)) + # adjusting x labels
+  xlab("Paint Color") +
+  ylab("Frequency") +
+  ggtitle("Frequency Distribution Across Paint Colors")
+```
+
+## Car type
+
+```{r}
+car_types_df <- bmw_data %>%
+  count(car_type)
+
+ggplot(car_types_df, aes(x=reorder(car_type, n, decreasing = TRUE), y=n)) +
+  geom_bar(stat = "identity", fill="lightblue") + # adding bars
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=12)) + # adjusting x labels
+  xlab("Car Type") +
+  ylab("Frequency") +
+  ggtitle("Frequency Distribution Across Car Type")
+```
+
+## Fuel
+
+```{r}
+fuels_df <- bmw_data %>%
+  count(fuel)
+
+ggplot(fuels_df, aes(x=reorder(fuel, n, decreasing = TRUE), y=n)) +
+  geom_bar(stat = "identity", fill="lightblue") + # adding bars
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=12)) + # adjusting x labels
+  xlab("Fuel") +
+  ylab("Frequency") +
+  ggtitle("Frequency Distribution Across Fuels")
+```
+
+## Model
+
+```{r}
+# Creating a new data frame with models sorted by their frequency
+models_df <- bmw_data %>%
+  count(model_key)
+# This dataframe 'models_df' now contains models sorted by frequency
+
+ggplot(models_df, aes(x=reorder(model_key, n, decreasing=TRUE), y=n)) +
+  geom_bar(stat = "identity", fill="lightblue") + # adding bars
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=4)) + # adjusting x labels
+  xlab("BMW Models") +
+  ylab("Frequency") +
+  ggtitle("Frequency Distribution Across BMW Models")
+```
+
+# Price distributions by categorical types
+
+## Model
+
+```{r}
+# Calculate mean price for each model
+mean_by_model <- bmw_data %>%
+  group_by(model_key) %>%
+  summarize(mean_price = mean(price)) %>%
+  arrange(desc(mean_price))
+
+# Use the ordered model_key for plotting
+bmw_data$model_key <- factor(bmw_data$model_key, levels = mean_by_model$model_key)
+
+# Now plot with the models ordered by decreasing mean price
+ggplot(bmw_data, aes(x=model_key, y=price, fill=car_type)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=4),
+        legend.position = c(1, 1), # Move the legend to the top-right corner
+        legend.justification = c(1, 1)) + # Rotating x labels for legibility
+  xlab("BMW Models") +
+  ylab("Price") +
+  ggtitle("Price Distribution Across BMW Models Sorted by Decreasing Mean Price") +
+  scale_fill_brewer(palette="Pastel1")
+```
+Non-constant variance of price is present in car models. Expensive models have higher price variance and cheap models have lower price variance (which makes sense).
+
+
+## Car type (e.g., sedan, hatchback)
+
+We note here that the mean price of the coupe is the most expensive, the SUV is second most expensive, and the subcompact is the cheapest.
+
+```{r}
+mean_by_type <- bmw_data %>%
+  group_by(car_type) %>%
+  summarize(mean_price = mean(price)) %>%
+  arrange(desc(mean_price))
+
+bmw_data$car_type <- factor(bmw_data$car_type, levels=mean_by_type$car_type)
+ggplot(bmw_data, aes(x=car_type, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Car Type") + 
+    ylab("Price") +
+    ggtitle("Box Plots for Price by Car Type Sorted in Descending Order of Mean Price")
+```
+
+## Color
+
+```{r}
+mean_by_color <- bmw_data %>%
+  group_by(paint_color) %>%
+  summarize(mean_price = mean(price)) %>%
+  arrange(desc(mean_price))
+
+bmw_data$paint_color <- factor(bmw_data$paint_color, levels=mean_by_color$paint_color)
+ggplot(bmw_data, aes(x=paint_color, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint Color") +
+    ylab("Price") + 
+    ggtitle("Box Plots for Price by Paint Color Sorted in Descending Order of Mean Price")
+```
+
+```{r}
+print(mean_by_color)
+```
+
+Interestingly, we see that of the common colors, white has the highest average price, while silver has the lowest. Coming in both with small samples, we see that orange has the highest mean and green has the lowest mean.
+
+## Age
+
+```{r}
+bmw_data$age_cat <- cut(bmw_data$age, breaks = c(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, Inf))
+ggplot(bmw_data, aes(x=age_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Age") +
+    ylab("Price") +
+    ggtitle("Price vs. Age Group Sorted in Descending Median")
+```
+
+# Engine power predicting price, age, and mileage
+
+```{r}
+bmw_data$engine_cat <- cut(bmw_data$engine_power, breaks = c(0, 100, 200, 300, 600), labels = c('low', 'medium', 'high', 'very_high'))
+ggplot(bmw_data, aes(x= engine_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Engine Power") +
+    ylab("Price")
+    
+  
+ggplot(bmw_data, aes(x= engine_cat, y=age)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Engine Power") +
+    ylab("Age")
+  
+ggplot(bmw_data, aes(x= engine_cat, y= mileage)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Engine Power") +
+    ylab("Milage")
+```
+
+# Correlation matrices between all features
+
+```{r}
+bmw_data_features_only <- select(bmw_data, starts_with("feature"))
+
+remove_cols <- colnames(bmw_data_features_only)
+bmw_data_minus_features <- bmw_data[, !(names(bmw_data) %in% remove_cols)]
+
+helper_cor_plot <- function(dataframe, fontsize=1) {
+  # convert any Boolean values to numeric values
+  dataframe <- data.frame(lapply(dataframe, function(col) {
+    if(is.logical(col)) as.numeric(col) else col
+  }))
+  cor_matrix <- cor(dataframe[sapply(dataframe, is.numeric)])
+  cor_matrix <- cor_matrix[order(rownames(cor_matrix)), order(colnames(cor_matrix))]
+  corrplot(cor_matrix, method = "color", type = "lower",
+           tl.col = "black", tl.srt = 45, # Text label color and rotation
+           addCoef.col = "black", number.cex = 0.5) # Add correlation coefficients to the plot
+}
+
+helper_cor_plot(bmw_data_features_only)
+helper_cor_plot(bmw_data_minus_features)
+helper_cor_plot(bmw_data, 0.5)
+```
+
+We observe medium-sized (> 0.3) correlations for the following...
+
+*  Feature 8 and Feature 5
+*  Feature 7 and Feature 2
+*  Feature 2 and Feature 1
+
+Apart from those medium-sized correlations, we note that all features apart from Feature 7
+and Feature 8 have *positive* correlations.
+
+We see that price has the strongest correlations (> 0.4) with the age, engine power, Feature 4,
+Feature 8, and milage. Year Registered is also strongly correlated with price, but it essentially
+mirrors Age (-0.99 correlation) and therefore is discarded from consideration.
+
+Interestingly, engine power and Feature 8 are strongly correlated (0.49), as are
+less surprisingly age and mileage (0.51). The strongest absolute correlation to price lies
+with engine power. This is slightly surprising as it may have been assumed that
+effective wear (which mileage is a proxy for) would have been the most correlated.
+
+However, this finding is not unprecedented as in our graphs of cars partitioned by
+age, we saw that engine power was the most consistent predictor.
+
+
+# Defining models
+
+## Simple linear regression
+
+```{r}
+# defining a helper function to plot the OLS and standardized residuals
+plotModelAndResiduals <- function(x, y, x_name, y_name) {
+  # Fitting the linear model
+  model <- lm(y ~ x)
+  
+  # Base plot for the model
+  plot(x, y, 
+       main = paste(y_name, " vs.", x_name), 
+       xlab = x_name, 
+       ylab = y_name, 
+       pch = 19, 
+       cex = 0.5,
+       col = "blue")
+  abline(model, col = "red")
+  
+  # Adding a legend for the model plot
+  legend("topright", legend = c("Observed Data", "Fitted Line"), 
+         col = c("blue", "red"), pch = c(19, NA), lty = c(NA, 1))
+  
+  # Calculating standardized residuals
+  std_res <- rstandard(model)
+  
+  # Plot for standardized residuals
+  plot(x, std_res, 
+       main = paste("Standardized Residuals for", y_name, "vs.", x_name), 
+       xlab = x_name, 
+       ylab = "Standardized Residuals", 
+       pch = 19, 
+       cex = 0.5,
+       col = "darkgreen")
+  
+  # Adding a horizontal line at 0 in the residuals plot
+  abline(h = 0, col = "red")
+  
+  # Adding a legend for the residuals plot
+  legend("topright", legend = "Standardized Residuals", col = "darkgreen", pch = 19)
+  
+  return(model)
+}
+
+
+# fitting the linear model
+y_1 <- bmw_data$price
+x_1 <- bmw_data$engine_power
+model_1 <- plotModelAndResiduals(x_1, y_1, "Engine Power", "Price")
+summary(model_1)
+```
+
+The model looks fairly good as-is apart from some major outliers that are lying far outside
+5 standard deviations.
+
+```{r}
+# calculate standardized residuals from the model
+std_res <- rstandard(model_1)
+
+# set threshold for standardized residuals
+threshold <- 5.5
+
+# find indices of data points with standardized residuals above the threshold
+indices_above <- which(std_res > threshold)
+
+# collect these data points from the original data
+bmw_data_above <- bmw_data[indices_above, ]
+
+# display dataframe
+bmw_data_above
+print(length(bmw_data_above$model_key))
+```
+
+When observing the 4 major outliers present in this model, we note that they are all relatively young, all have Feature 8, none have Feature 6, and most have Feature 1 and Feature 2 and yet don't have Feature 3 or Feature 4. All are different models with varying mileage (4,530 - 103,222). Three of the cars are SUVs. They make up $\sim 0.1\%$ of our data, yet with the maximal standardize residual of 22.9, they have a disproportionately high effect
+on our model. for that reason, we remove them all.
+
+Rui 03/15/24
+Does these prices make sense?
+For example, observation #4685 a BMW X4 4 years old at sold time sold for 142800 doesn't make sense to me...
+
+```{r}
+bmw_data_cleaned <- bmw_data[-indices_above, ]
+```
+
+```{r}
+y_2 <- bmw_data_cleaned$price
+x_2 <- bmw_data_cleaned$engine_power
+model_2 <- plotModelAndResiduals(x_2, y_2, "Engine Power", "Price")
+summary(model_2)
+```
+
+By simply removing the four outliers, we were able to greatly improve our standardized residuals graph and brought our $R^2$ value up to 0.4596, a significant improvement. However, we see nonconstant variance in which the residuals grow larger as engine power goes long. Therefore, the model is not valid as-is.
+
+```{r}
+y_3 <- sqrt(bmw_data_cleaned$price)
+x_3 <- bmw_data_cleaned$engine_power
+model_3 <- plotModelAndResiduals(x_3, y_3, "Engine Power", "Price")
+plot(model_3)
+summary(model_3)
+```
+
+By taking the square root of price, we are able to greatly enhance the data's adherence to our
+assumptions of constant variance and a mean of errors equal to 0. We notice that the median
+residual is at a low of 2.47, compared to prior median residuals of -52595 and -22.
+
+We note that we have potential outlier observations in 18, 38, 3600, 1255, 213, 4354, and 255. In the theoretical quantiles plot and scale-location plot, we see 213 and 4354 occur in both, and they are the only two observations
+to both be marked as outliers more than once.
+
+```{r}
+potential_outlier <- bmw_data[213,]
+print(potential_outlier)
+potential_outlier <- bmw_data[4354,]
+print(potential_outlier)
+```
+
+At first glance, nothing seems exceptionally wrong with these items. Both vehicles are perhaps cheap,
+particularly the SUV, but they also only share two features of a potential 16 amongst them and
+have medium mileage and low engine power. These outliers are due for further investigation later. In our
+research, we came across the RPubs modeling done here (https://rpubs.com/Adetya/650497) in which
+approximately 10 SUVs were grealty skewing the model. Therefore, we will cross-validate our work
+in removing (or not) assumptions with their work as it becomes necessary/pertinent.
+
+## Multiple linear regression
+
+From our previous work with correlation matrices, we can see that the potentially most predictive elements for price included engine power, mileage, age, Feature 3, and Feature 8. However, other features had positive effects and we did not investigate the effect of paint and model.
+
+We convert the model, color, paint, and month-sold and month-registered information all to categorical
+data for R to interpret as separate classes.
+
+```{r}
+# setting the categorical variables to factors (so R treats them as categorical)
+bmw_data_cleaned$model_key <- as.factor(bmw_data_cleaned$model_key)
+bmw_data_cleaned$car_type <- as.factor(bmw_data_cleaned$car_type)
+bmw_data_cleaned$paint_color <- as.factor(bmw_data_cleaned$paint_color)
+bmw_data_cleaned$month_sold <- as.factor(bmw_data_cleaned$month_sold)
+bmw_data_cleaned$fuel <- as.factor(bmw_data_cleaned$fuel)
+```
+
+We now create a multiple linear regression including all potentially informative features that do not exhibit
+immediately obvious multicollinearity (i.e., year registered) and shall use summary information from the model
+to see which features are most important. We also exclude month registered as that contains information
+already present in age feature and seems illogical to influence a selling price later on.
+
+```{r}
+mlr_all <- lm(formula = price ~
+                engine_power + age + mileage + model_key + car_type + paint_color + month_sold + fuel +
+                feature_1 + feature_2 + feature_3 + feature_4 + feature_5 + feature_6 + feature_7 + feature_8,
+                data = bmw_data_cleaned)
+summary(mlr_all)
+par(mfrow = c(2, 2))
+plot(mlr_all)
+```
+We observe that when plotting a naive MLR with all features we have a quadratic pattern in the plain and square-rooted standardized residuals and several points are marked as outliers, chief amongst them being
+entries 3733, 2679, and 3321. We also see that the points 56, 107, 1899, 2925, 3153, 4798, 4799, and 4820 have
+reported leverages of **1** and therefore were not plotted by R. Before we spend time inquiring further, we must whittle down our model to the most important features and consider transformations.
+
+According to the summary output, all features but Feature 2 ($p \approx 0.99$) and Feature 5 $(p \approx 0.2)$ were significant. No colors had any significance. Month sold does interestingly have some significance in the
+event of it being September ($p \approx 0.03$) or August ($p \approx 0.095$).
+
+It may be tempting to say that the car market is hotter during the later Summer season; however, it is hard to generalize this finding because the dataset was sampled from a specific auction house. 
+
+Whether a car is a convertible, hatchback, or estate seems informative, and a vast majority of the
+models contain informative information as well regarding price. We see that all but two models
+possess signficance codes indiciating $p \approx 0$.
+
+With respect to fuel type, we see that if a vehicle has the fuel class hybrid-petrol, that provides
+significant information, but the other two classes of fuel apart from diesel are not informative.
+
+A new model could remove paint color, Feature 2, and Feature 5.
+
+```{r}
+mlr_2 <- lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type + month_sold + fuel +
+              feature_1 + feature_3 + feature_4 + feature_6 + feature_7 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_2)
+plot(mlr_2)
+```
+
+In this new model, month sold has now fluctuated such that August appears more significant. The model is similarly weak compared to the prior model in terms of its alignment with our assumptions. Therefore we shall take a more aggressive approach, reducing our model further. This time we will take away month sold and fuel.
+
+```{r}
+mlr_3 <- lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type +
+              feature_1 + feature_3 + feature_4 + feature_6 + feature_7 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_3)
+plot(mlr_3)
+```
+
+Our adjusted $R^2$ has remained roughly the same despite the removals, and our F-Statistic has continued to increase, from 210 to 260. We now keep only the three most statistically signficant features (4, 6, & 8).
+
+```{r}
+mlr_4 <-  lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type + feature_4 + feature_6 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_4)
+plot(mlr_4)
+```
+
+Our model has become simpler without much change at all in its key statistics or adherence to our assumptions. Let's try to further simplify the model.
+
+```{r}
+mlr_5 <-  lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type,
+              data = bmw_data_cleaned)
+summary(mlr_5)
+plot(mlr_5)
+```
+
+Upon removal of the features, we see a worsening of the model across the board, and yet the understandability of the model is not markedly increased. We shall now try removing the model key.
+
+```{r}
+mlr_6 <-  lm(formula = price ~
+              engine_power + age + mileage + feature_4 + feature_6 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_6)
+plot(mlr_6)
+```
+
+We see that the model's adjusted $R^2$ has decreasing by 0.1, yet the F-statistic has blown up to $> 1,900$. We
+should investigate further with an ANOVA test.
+
+```{r}
+anova_result <- anova(mlr_6, mlr_4)
+print(anova_result)
+```
+
+We see that the full model provides a significantly better fit for the data, and therefore we should likely consider the model of the car in our analysis. This makes intuitive sense given our graph in which we saw that models could hugely differ in their distribution of price, and many models had means twice that of other models.
+
+As we have done transformations and analysis of various models, we should now consider further removal of outliers.
+
+```{r}
+# accumulated outliers for mlr_4 based on leverage and diagnostic graphs
+outlier_indices <- c(56, 107, 1899, 2925, 3153, 3600, 4798, 4799, 4820, 4821, 2679,
+                     3596, 3733, 73, 4147)
+bmw_outlier <- bmw_data[outlier_indices, ]
+# print the dataframe that contains outliers and check each observation if it make sense
+bmw_outlier
+
+```
+
+To remove outliers, we set a threshold of $\frac{10\cdot p}{n}$ where $p$ is the number of parameters
+and $n$ is the number of observations (our sample size). We then unionize the resulting high-leverage
+data points with our prior outliers.
+
+Rui 3/15/24
+actually I don't understand why these observations are outliers, their price and feature combination looks pretty normal to me. 
+
+But I think there is a reson why they are outliers, they might deviate from the mean price a lot in their car model group.
+
+```{r}
+leverages <- hatvalues(mlr_4)
+
+p <- length(coef(mlr_4))
+n <- nrow(bmw_data_cleaned)
+print(p)
+print(n)
+
+threshold <- (10 * p) / n
+print(threshold)
+
+high_leverage_indices <- which(leverages >= threshold)
+print(length(high_leverage_indices))
+
+outlier_indices_expanded <- union(outlier_indices, high_leverage_indices)
+print(length(outlier_indices_expanded))
+```
+
+We refit our model having now removed our extensive number of outliers.
+
+```{r}
+bmw_data_reduced <- bmw_data_cleaned[-outlier_indices_expanded, ]
+mlr_4_v2 <-  lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type + feature_4 + feature_6 + feature_8,
+              data = bmw_data_reduced)
+summary(mlr_4_v2)
+plot(mlr_4_v2)
+```
+
+Despite our lump-sum removal of 311 outliers, our model hasn't improve significantly. Not only does this inform us that simply removing terms based on their leverage is not meaningful, but it also shows the danger of removing many data points simply in hopes of improving a model's reported statistics. We need to be more precise in the way we improve our model. Currently, our model seems roughly "capped" at an adjusted $R^2$ of $\sim 0.8$. That said, we haven't yet included interaction terms.
+
+```{r}
+mlr_4_v3 <-  lm(formula = price ~
+              engine_power + age + model_key + car_type + mileage
+              + feature_4 + feature_6 + feature_8 +
+              + engine_power:car_type:feature_8 + age:mileage,
+              data = bmw_data_reduced)
+summary(mlr_4_v3)
+plot(mlr_4_v3)
+```
+
+Now we see that we have improved the model once again by included interaction terms between car type and engine power and Feature 8 *and also* age and mileage. These interactions we chose were inspired by the correlations that could be seen in our correlation matrices. Age and mileage tend to increase together, and all of engine power, Feature 8, and car type tend to predict each other as well. We now have a more normal Q-Q plot where none of the standardized residuals nearly reach $+10$ as before.
+
+
+```{r}
+# data exploration for 2nd research question: Data imputation
+# Being that the data set does not contain missing values, how can we simulate data loss
+# and then more interestingly how can we perform value imputation?
+# since imputation is doing regression for X's over Xjc (all variables except Xj). The variable used is the same as our MLR model.no additional data exploration needed
+
+# For instance, mileage is missing for a listed car
+# you are interested in purchasing the car but don't want a used car with super high mileage. Could you use available info to estimate the mileage?
+mileage_m <- lm(mileage ~ price + engine_power + age + model_key + car_type
+                + feature_4 + feature_6 + feature_8 +
+              + engine_power:car_type:feature_8,
+              data = bmw_data_reduced)
+anova(mileage_m)
+```
+
+We extract ...
+
+```{r}
+# extract one observation from the df
+new_data = data.frame(bmw_data[300, ])
+# remove the mileage data in the observation
+new_data[1, 3] == NA
+new_data
+imputation_value = predict(mileage_m, new_data, interval = 'prediction', level = 0.95)[1]
+actual_value = bmw_data[300, 3]
+c(imputation_value, actual_value)
+imputation_mileage <- function(data, i){
+  mileage_m <- lm(mileage ~ price + engine_power + age + model_key + car_type +  + feature_4 + feature_6 + feature_8 +
+              + engine_power:car_type:feature_8,
+              data = data)
+  new_data = data.frame(bmw_data[i, ])
+  estimate = predict(mileage_m, new_data, interval = 'prediction', level = 0.95)[1]
+  actual= bmw_data[i, 3]
+  result = c(estimate, actual)
+  return(result)
+}
+# not bad
+imputation_mileage(bmw_data_reduced, 200)
+# not bad
+imputation_mileage(bmw_data_reduced, 500)
+# very accurate 
+imputation_mileage(bmw_data_reduced, 1700)
+```
+
+```{r}
+# Interested in estimating engine_power with price?
+# write a function and 
+enginepower_m <- lm(engine_power ~ price + age + model_key + car_type 
+                    + feature_4 + feature_6 + feature_8 + car_type:feature_8,
+              data = bmw_data_reduced)
+new_data2 = data.frame(bmw_data[300, ])
+new_data2[1, 4] = NA
+imputation_value2 = predict(enginepower_m, new_data, interval = 'prediction', level = 0.95)[1]
+actual_value2 = bmw_data[300, 4]
+c(imputation_value2, actual_value2)
+# estimation is very accurate for this example
+imputation_engine <- function(data, i) {
+  enginepower_m <- lm(engine_power ~ price + age + model_key + car_type 
+                    + feature_4 + feature_6 + feature_8 + car_type:feature_8,
+              data = data)
+  new_data = data.frame(bmw_data[i, ])
+  estimate = predict(enginepower_m, new_data, interval = 'prediction', level = 0.95)[1]
+  actual= bmw_data[i, 4]
+  result = c(estimate, actual)
+  return(result)
+}
+imputation_engine(bmw_data_reduced, 200)
+# very accurate again
+imputation_engine(bmw_data_reduced, 1680)
+# still accurate
+```
+
+```{r}
+imputation_feature8 <- function(data, i) {
+  feature8_m <- lm(feature_8 ~ price +
+              engine_power + age + model_key + car_type + mileage
+              + feature_4 + feature_6 +
+              + engine_power:car_type + age:mileage,
+              data = data)
+  new_data = data.frame(bmw_data[i, ])
+  estimate = predict(feature8_m, new_data, interval = 'prediction', level = 0.95)[1]
+  actual= as.numeric(bmw_data_reduced[i, 16])
+  estimate_bool = NA
+  actual_bool = NA
+  if (estimate < 0.33) {estimate_bool = FALSE}
+  else if (estimate>0.67) {estimate_bool = TRUE}
+  else {estimate_bool = 'Uncertain'}
+  if (actual == 0) {actual_bool = FALSE}
+  else {actual_bool = TRUE}
+  #result = c(estimate, actual)
+  result = c(estimate_bool, actual_bool)
+  return(result)
+}
+# good
+imputation_feature8(bmw_data_reduced, 300)
+# oops not good
+imputation_feature8(bmw_data_reduced, 500)
+# oops not good again
+imputation_feature8(bmw_data_reduced, 1600)
+# seems feature8 is not a good variable to do imputation
+```
+We setup a rule for building imputation models here. We could predict more variable following the same procedure.
+
+
+
+```{r}
+# Seasonal adjustments
+new_data3 = data.frame(month_sold = as.factor(bmw_data$month_sold), month_regis = as.factor(bmw_data$month_registered),price = bmw_data$price, year = as.factor(bmw_data$year_registered))
+# all cars are sold in the first 9 month of 2018
+summary(new_data3$month_sold)
+summary(new_data3$month_regis)
+# add 3 months as place holder to make it a whole year
+levels(new_data3$month_sold) = c(levels(new_data3$month_sold), '10', '11', '12')
+new_data3$month_sold = c(new_data3$month_sold) 
+summary(new_data3$month_sold)
+plot(new_data3$month_sold, new_data3$price)
+```
+
+
+```{r}
+# investigate in the seasonality of month sold
+monthly_mean <- function(data){
+  monthly_mean_price = numeric(12)
+  for (i in 1:12){
+    monthly_mean_price[i] = mean(new_data3$price[new_data3$month_sold==as.character(i)])
+  }
+  return(monthly_mean_price)
+}
+monthly_mean(new_data3)
+plot(monthly_mean(new_data3),type = 'l')
+```
+
+```{r}
+# investigate in the seasonality of month registered
+monthly_mean2 <- function(data){
+  monthly_mean_price = numeric(12)
+  for (i in 1:12){
+    monthly_mean_price[i] = mean(new_data3$price[new_data3$month_regis==as.character(i)])
+  }
+  return(monthly_mean_price)
+}
+monthly_mean2(new_data3)
+plot(monthly_mean2(new_data3),type = 'l')
+
+plot(monthly_mean2(new_data3),type = 'l', col = 'red')
+lines(monthly_mean(new_data3))
+```
+
+```{r}
+# investigate in the year of registration
+# Assess the trend in price of year's registered
+summary(new_data3$year)
+# Assess the trend of years' registered data
+year_mean <- function(data){
+  year_mean = numeric(length(seq(from = 1990, to = 2017)))
+  for (i in seq(from = 1990, to = 2017)){
+    year_mean[i] = mean(new_data3$price[new_data3$year==as.character(i)])
+  }
+  return(year_mean)
+}
+year_mean1 = na.omit(year_mean(new_data3))
+# yearly mean of the prices
+year_mean1 = subset(year_mean1, year_mean1 != 0)
+plot(levels(new_data3$year), year_mean1,type = 'l')
+```
+
+Registration (new car transaction) is near evenly spreaded within a year
+Sold is skewed, with much more transactions in summer (from month 5 to 8), and less transactions in winter.
+The month average price matrix shows a lot of variation between years but doesn't shows apparent patterns across year.
