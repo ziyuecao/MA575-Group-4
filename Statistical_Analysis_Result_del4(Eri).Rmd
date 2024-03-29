@@ -1,0 +1,314 @@
+---
+title: "Multiple Linear Regression Development"
+author: "James Davin, Rui Gong, Jiemin Yang, Eri Grezda"
+date: "2024-03-29"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r setup, include=FALSE}
+# Necessary library setup
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+library(dplyr)
+library(corrplot)
+library(kableExtra)
+```
+
+
+
+```{r, include = FALSE}
+# Reading and summarizing the data we'll be working with
+# read updated dataset
+bmw_data <- read.csv("~/Documents/08.BU/Academics/MA575/Project/Projects/BMWpricing_updated.csv", header=TRUE, as.is=TRUE)
+```
+
+
+
+```{r, include=FALSE}
+# Data cleaning
+# Because we are not splitting our data into training/testing/validation nor engaging in machine learning, we remove the irrelevant "obs_type" (*observation type*) column.
+bmw_data$obs_type <- NULL
+
+# Remove mileage and engine power inappropriate observations. The number of entries reduces by 2.The total number of observation is: 4843-2 = 4841
+
+```
+
+
+```{r, include=FALSE}
+# row 2939 has negative mileage values -- we opt to delete it
+bmw_data <- bmw_data[-which(bmw_data$mileage < 0),]
+# row 3765 has 0 engine power values -- we opt to delete it
+bmw_data <- bmw_data[-which(bmw_data$engine_power == 0),]
+# we should now have 4843 - 2 = 4841 observations
+print(length(bmw_data$mileage))
+```
+
+```{r, include=FALSE}
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(bmw_data$sold_at, "/")
+registration_split <- strsplit(bmw_data$registration_date, "/")
+
+# create field specifying month sold
+bmw_data$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+# create field specifying month registered
+bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+# create field specifying year registered
+bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+# create a field specifying age of each car 
+bmw_data$age <- 2018 - bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered)
+```
+
+
+
+```{r, include=FALSE}
+#Remove outliers in SLR
+# defining a helper function to plot the OLS and standardized residuals
+plotModelAndResiduals <- function(x, y, x_name, y_name) {
+  # Fitting the linear model
+  model <- lm(y ~ x)
+  
+  # Base plot for the model
+  plot(x, y, 
+       main = paste(y_name, " vs.", x_name), 
+       xlab = x_name, 
+       ylab = y_name, 
+       pch = 19, 
+       col = "blue")
+  abline(model, col = "red")
+  
+  # Adding a legend for the model plot
+  legend("topright", legend = c("Observed Data", "Fitted Line"), 
+         col = c("blue", "red"), pch = c(19, NA), lty = c(NA, 1))
+  
+  # Calculating standardized residuals
+  std_res <- rstandard(model)
+  
+  # Plot for standardized residuals
+  plot(x, std_res, 
+       main = paste("Standardized Residuals for", y_name, "vs.", x_name), 
+       xlab = x_name, 
+       ylab = "Standardized Residuals", 
+       pch = 19, 
+       col = "darkgreen")
+  
+  # Adding a horizontal line at 0 in the residuals plot
+  abline(h = 0, col = "red")
+  
+  # Adding a legend for the residuals plot
+  legend("topright", legend = "Standardized Residuals", col = "darkgreen", pch = 19)
+  
+  return(model)
+}
+
+
+# fitting the linear model
+y_1 <- bmw_data$price
+x_1 <- bmw_data$engine_power
+model_1 <- plotModelAndResiduals(x_1, y_1, "Engine Power", "Price")
+summary(model_1)
+```
+
+```{r, include=FALSE}
+# calculate standardized residuals from the model
+std_res <- rstandard(model_1)
+
+# set threshold for standardized residuals
+threshold <- 5.5
+
+# find indices of data points with standardized residuals above the threshold
+indices_above <- which(std_res > threshold)
+
+# collect these data points from the original data
+bmw_data_above <- bmw_data[indices_above, ]
+
+# display dataframe
+bmw_data_above
+print(length(bmw_data_above$model_key))
+```
+
+
+```{r, include=FALSE}
+
+# When observing the 4 major outliers present in this model, we note that they are all relatively young, all have Feature 8, none have Feature 6, and most have Feature 1 and Feature 2 and yet don't have Feature 3 or Feature 4. All are different models with varying mileage (4,530 - 103,222). Three of the cars are SUVs. They make up $\sim 0.1\%$ of our data, yet with the maximal standardize residual of 22.9, they have a disproportionately high effect
+# on our model. for that reason, we remove them all.
+
+bmw_data_cleaned <- bmw_data[-indices_above, ]
+```
+
+
+## Multiple linear regression
+
+From our previous work with correlation matrices, we can see that the potentially most predictive elements for price included engine power, mileage, age, Feature 3, and Feature 8. However, other features had positive effects and we did not investigate the effect of paint and model.
+
+We convert the model, color, paint, and month-sold and month-registered information all to categorical data for R to interpret as separate classes.
+
+```{r}
+# setting the categorical variables to factors (so R treats them as categorical)
+bmw_data_cleaned$model_key <- as.factor(bmw_data_cleaned$model_key)
+bmw_data_cleaned$car_type <- as.factor(bmw_data_cleaned$car_type)
+bmw_data_cleaned$paint_color <- as.factor(bmw_data_cleaned$paint_color)
+bmw_data_cleaned$month_sold <- as.factor(bmw_data_cleaned$month_sold)
+bmw_data_cleaned$fuel <- as.factor(bmw_data_cleaned$fuel)
+```
+
+Initially, we construct a multiple linear regression model incorporating all potentially relevant features, excluding those with apparent multicollinearity. We also omit the month of registration from our analysis because it duplicates information captured by the age feature and appears to have an illogical impact on the subsequent selling price. Fitting the intial model, we will then analyze the model's summary to determine the most significant features. 
+
+```{r}
+mlr_all <- lm(formula = price ~
+                engine_power + age + mileage + model_key + car_type + paint_color + month_sold + fuel +
+                feature_1 + feature_2 + feature_3 + feature_4 + feature_5 + feature_6 + feature_7 + feature_8,
+                data = bmw_data_cleaned)
+summary(mlr_all)
+plot(mlr_all)
+```
+
+We observe that when plotting a naive MLR with all features we have a quadratic pattern in the plain and square-rooted standardized residuals and several points are marked as outliers and some point of high leverage.Before we spend time inquiring further, we must whittle down our model to the most important features.
+
+According to the summary output, all features but Feature 2 ($p \approx 0.99$) and Feature 5 $(p \approx 0.2)$ were significant. No colors had any significance. Month sold does interestingly have some significance in the event of it being September ($p \approx 0.03$) or August ($p \approx 0.095$).
+
+It may be tempting to say that the car market is hotter during the later Summer season; however, it is hard to generalize this finding because the dataset was sampled from a specific auction house. 
+
+Whether a car is a convertible, hatchback, or estate seems informative, and a vast majority of the models contain informative information as well regarding price. We see that all but two models possess signficance codes indiciating $p \approx 0$.
+
+With respect to fuel type, we see that if a vehicle has the fuel class hybrid-petrol, that provides significant information, but there are only 8 cases are of type hybrid-petrol, which give us limited power to detect the real effect. 
+
+A new model could remove paint color, fuel, month sold,  Feature 2, and Feature 5.
+
+
+```{r}
+
+mlr_2 <- lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type + 
+              feature_1 + feature_3 + feature_4 + feature_6 + feature_7 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_2)
+plot(mlr_2)
+```
+         
+Our adjusted $R^2$ has remained roughly the same despite the removals, and our F-Statistic has continued to increase, from 210 to 260. We now keep only the three most statistically signficant features (4, 6, & 8).
+
+```{r}
+mlr_3 <-  lm(formula = price ~
+              engine_power + age + mileage + model_key + car_type + feature_4 + feature_6 + feature_8,
+              data = bmw_data_cleaned)
+summary(mlr_3)
+plot(mlr_3)
+
+```
+
+The adjusted R-squared remains consistent, while the F-statistics show a slight increase. We will retain the independent variables: engine power (horsepower), age (age), total mileage (mileage), model name (model_key), type (car_type), and specific features (feature_4, feature_6, feature_8).
+
+Upon inspecting the residual plot, a quadratic pattern emerges in both the residual vs. fitted and standard residual vs. fitted plots, suggesting the linear model may not fully capture the variables' relationship. This pattern implies a potential nonlinear relationship between the independent and dependent variables. As with the previously fitted simple linear regression, we consider applying a square root transformation to the price.
+
+
+```{r}
+mlr_4 <-  lm(formula = sqrt(price) ~
+              engine_power + age + mileage + model_key + car_type + feature_4 + feature_6 + feature_8,
+              data = bmw_data_cleaned)
+
+
+summary(mlr_4)
+plot(mlr_4)
+```
+
+# Data Analysis Results
+
+This output is from a multiple linear regression analysis where the square root of the car price (sqrt(price)) is modeled as a function of various predictors, including engine_power, age, mileage, different model_key categories, car_type, and features feature_4, feature_6, and feature_8, based on data from bmw_data_cleaned.
+
+### Intercept and coefficient
+
+- The Intercept value of 200.6 suggests the average price($200.6^2 = 40240.36$) at baseline when all other predictors are zero.
+
+- Engine Power
+  For `engine_power`, the coefficient is 0.1498, indicating a positive relationship with the square root of the price. This means that as engine power increases, the square root of the price also increases, with each one-unit increase in engine power raising the square root of the price by approximately 0.1498 units. 
+
+- Age
+  The coefficient for `age` is -5.435, showing a negative relationship with the square root of the price. As the age of the car increases by one year, the square root of the price decreases by about 5.435 units, reflecting the depreciation effect on the car's value.
+
+- Mileage
+  With a coefficient of -0.0001088 for `mileage`, there is a slight negative impact on the square root of the price. This implies that higher mileage slightly reduces the square root of the car’s price, which could be due to wear and tear or perceived reduction in value.
+
+- Model Key Categories
+  Each `model_key` coefficient indicates the difference in the square root of the price for that model compared to a baseline model(M4). For example, `model_key750` has a coefficient of -31.92, suggesting that the average model's square root price is 31.92 lower compared to the average M4 model .
+
+- Car Types
+  The coefficients for `car_type` categories show the difference in square root price compared to the baseline car type(coupe). Convertibles (`car_typeconvertible`), for instance, have a positive coefficient of 11.32, indicating a higher square root price compared to the baseline, which suggests that convertibles are generally more expensive.
+
+- Features
+  Features like `feature_4`, `feature_6`, and `feature_8` have positive coefficients (7.005 for `feature_4`, for example), meaning that cars equipped with these features have a higher square root price. This indicates the added value or premium associated with these features in the car market.
+
+### Statistical Significance:
+
+- Statistically significant predictors (p-value < 0.05) have a meaningful impact on the square root of the price. For example, age, mileage, and engine_power are significant, as well as several model_key and car_type categories.
+
+- Model Fit:
+The Multiple R-squared value of 0.8309 indicates that approximately 83.09% of the variability in the square root of the car price is explained by the model, which is a strong level of explanatory power.
+
+The Adjusted R-squared of 0.8278 adjusts this figure for the number of predictors in the model, confirming that the model fits well.
+
+The F-statistic and its very small p-value (< 2.2e-16) suggest that the model is statistically significant; the predictors, as a whole, have a significant effect on the square root of the car price.
+
+### Residuals:
+- The residuals' range and quartiles indicate how far off the model's predictions are from the actual values. Most residuals are within a reasonable range, suggesting no major issues with model fit across the data.
+
+- The transformation of the dependent variable to its square root has notably enhanced the residual plots, indicating a better fit of the model. The standard residual versus fitted plot now shows a more flattened curve, suggesting increased constancy in the residuals across different fitted values.
+
+- The quantile-quantile (QQ) plot has also shown improvement, particularly in the higher price range, signifying that the square root transformation of the price aligns more closely with the normal distribution assumption.
+
+- However, an unusual grouping of data points is observed in the residual plot, with all residuals less than -50. Attempts to fit additional variables did not resolve this issue, implying that this specific data cluster warrants a more thorough investigation.
+
+```{r}
+# Calculate VIF for each model
+
+# VIF for m.mls
+vif_mls <- car::vif(m.mls)
+
+# VIF for m.interact
+vif_interact <- car::vif(m.interact)
+
+# VIF for m.root_interact
+vif_root_interact <- car::vif(m.root_interact)
+
+# Print VIF values
+print("VIF for Model m.mls:")
+print(vif_mls)
+
+print("VIF for Model m.interact:")
+print(vif_interact)
+
+print("VIF for Model m.root_interact:")
+print(vif_root_interact)
+
+# Function to create bar plot for VIF values
+plot_vif <- function(model_name, vif_values) {
+  ggplot(data.frame(Predictor = names(vif_values), VIF = vif_values), aes(x = Predictor, y = VIF)) +
+    geom_bar(stat = "identity", fill = "skyblue") +
+    labs(title = paste("Variance Inflation Factors (VIF) for", model_name),
+         x = "Predictor", y = "VIF") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+}
+
+# Create separate plots for each model
+plot_m.mls <- plot_vif("m.mls", vif_mls)
+plot_m.interact <- plot_vif("m.interact", vif_interact)
+plot_m.root_interact <- plot_vif("m.root_interact", vif_root_interact)
+
+plot_m.mls
+plot_m.interact
+plot_m.root_interact
+```
+The first model, a multiple linear regression, shows low multicollinearity among its predictors with VIF values of 1.35 for x1, 1.01 for x2, and 1.34 for x3. Because each of these values is below 5, It indicates that the predictors are relatively independent of each other. In our second model which includes interaction terms, our model retains a relatively low mulitcollinearity. There is a relatively high variance inflation factor in our interaction term, 11.35 for x1:x3, however we can assume this is redundant because the interaction term is made up of two predictors that are already in the data set and therefore it is inherently co linear. For the same reason we see the VIF values for x1 increased to 5.89 and x3 increased to 3.80 and x2 remained nearly constant at 1.01 because it was not part of the interaction term. Overall our interaction model shows low levels of multicollinearity, however we are examining the predictor x1 further because its VIF value is greater than 5.
+
+
+
+
