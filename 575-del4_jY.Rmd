@@ -1,0 +1,341 @@
+---
+title: "del4"
+author: "JieminYang"
+date: "2024-04-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/08.BU/Academics/MA575/Project/Projects")
+```
+
+
+# read data
+```{r}
+df <- read.csv("BMWpricing_updated.csv")
+library(car)
+library(caret)
+library(ggplot2)
+library(MLmetrics)
+library(dplyr)
+library(GGally)
+
+```
+#data process
+
+
+
+```{r, include=FALSE}
+# row 2939 has negative mileage values -- we opt to delete it
+df <- df[-which(df$mileage < 0),]
+# row 3765 has 0 engine power values -- we opt to delete it
+df <- df[-which(df$engine_power == 0),]
+
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(df$sold_at, "/")
+registration_split <- strsplit(df$registration_date, "/")
+
+# create field specifying month sold
+df$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+# create field specifying month registered
+df$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+# create field specifying year registered
+df$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+# create a field specifying age of each car 
+df$age <- 2018 - df$year_registered + (1/12)*(df$month_sold - df$month_registered)
+
+
+```
+
+
+
+#Comparison Training & Validation Data Sets
+We compare the training and validation datasets to ensure balanced representation.
+(For categorical variables we want ensure that categories in the ... # ... validation data set belong to the training data set. This is a problem usually when there are small proportion of ...
+ observations in one or more group.)
+
+There are slight disparities in numbers for some categories such as SUVs, vans, and subcompacts. These differences are minor and likely won't significantly impact model performance but indicate slight variations in dataset composition.
+
+In the second table, some models appear only in the validation set (e.g., 214 Gran Tourer, 216) and not in the training set. Such discrepancies can affect model performance if the model needs to predict on unseen categories.
+
+Overall, the datasets seem well-matched with each other, maintaining a good level of consistency across different categories and binary features. However, there are minor skews in some specific vehicle models and types, which could be due to natural variances in the data collection process.
+
+```{r}
+table(df$car_type, df$obs_type)
+table(df$model_key, df$obs_type)
+table(df$feature_4, df$obs_type)
+table(df$feature_6, df$obs_type)
+table(df$feature_8, df$obs_type)
+```
+Boxplots for age and mileage
+
+Age:
+
+Similarity: Both training and validation sets appear to have a similar median age, indicated by the line in the middle of the box. Both has similary IQR, which is the height of the box, showing that the middle 50% of the data is similarly spread out
+Dissimilarity: .However training data has more outliers, which are the individual points above the upper whisker. 
+
+
+Mileage:
+
+Similarity:  Both training and validation sets appear to have a similar median age, indicated by the line in the middle of the box. Both has similary IQR, which is the height of the box, showing that the middle 50% of the data is similarly spread out
+
+Dissimilarity: Both sets show a number of outliers, but the validation set has a wider spread of these outliers, with some reaching up to around 1,000,000 miles. 
+
+```{r}
+ggplot(df, aes(x = obs_type, y = age, color = obs_type)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "obs_type", y = "age") +
+  scale_fill_manual(name = "Dataset obs_type", values = c("Training" = "blue", "Validatio
+n" = "red")) +
+  ggtitle("age by Type (Training vs. Validation)") +
+  theme_bw()
+
+ggplot(df, aes(x = obs_type, y = mileage, color = obs_type)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "obs_type", y = "mileage") +
+  scale_fill_manual(name = "Dataset obs_type", values = c("Training" = "blue", "Validatio
+n" = "red")) +
+  ggtitle("mileage by Type (Training vs. Validation)") +
+  theme_bw()
+
+
+```
+
+# Model Fitting
+
+We fit a multiple linear regression model using selected predictors.
+
+```{r}
+training_data <- subset(df, obs_type == "Training")
+m.mlr <- lm(formula = price ~ age + model_key +
+                car_type + mileage + feature_4 +
+                feature_6 + feature_8 
+                + age:mileage,
+              data = training_data)
+```
+
+A summary of the linear regression model is provided.
+
+```{r}
+# Model summary
+summary(m.mlr)
+```
+
+## Model Diagnostics
+
+We conduct model diagnostics to assess assumptions and multicollinearity.
+
+```{r, fig.width = 6.5, fig.align = "center", fig.height = 6.5}
+# Plotting added variable plots
+avPlots(m.mlr)
+
+# Check for multicollinearity
+# Computing variance inflation factors (VIFs)
+vif(m.mlr)
+
+# Create a data frame with the residuals and fitted values
+diagnostics_df <- data.frame(Residuals = resid(m.mlr),
+                           Fitted_Values = fitted(m.mlr),
+                           Standardized_Residuals = rstandard(m.mlr),
+                           Leverage = hatvalues(m.mlr),
+                           Date = training_data$sold_at
+                           )
+```
+
+
+
+1. Residuals vs. Fitted Values:
+   - Ideally, residuals should be randomly distributed with no discernible pattern. In this plot, there is a pattern where residuals have quadratic curve in fitted values, indicating that the model may be missing a nonlinear relationship or interactions between variables. The presence of a few large residuals also suggests possible outliers or leverage points.
+
+2. Standardized Residual QQ Plot:
+   - This plot compares the distribution of the residuals to a normal distribution. The points in this plot deviate significantly from the red dashed line, especially in the tails, which suggests that the residuals are not normally distributed. This could mean that the underlying assumptions of the regression model are violated.
+
+3. Scale-Location (or Spread-Location) Plot:
+   - This plot shows if the residuals are spread equally along the ranges of predictors. It's used to check the assumption of equal variance (homoscedasticity). The pattern in this plot with residuals fanning out with cruve in fitted values is a sign of heteroscedasticity.
+
+4. Standardized Residuals vs. Leverage Plot:
+   - This plot helps us to find influential cases (those that have a larger impact on the calculation of the regression coefficients). The points in the upper right corner and the lower right corner are high-leverage points and could potentially be influential points. 
+
+Overall, these diagnostic plots indicate that the regression model may have some issues with nonlinearity, non-normality of residuals, heteroscedasticity, and potentially influential outliers. 
+
+```{r}
+# Create the standardized residuals vs. fitted values plot
+ggplot(diagnostics_df, aes(x = Fitted_Values, y = Residuals)) +
+  geom_point(col="blue", alpha=0.75) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs( title = "Residuals vs. Fitted Values",
+        x = "Fitted Values", y = "Residuals") +
+  theme_bw()
+
+# Create the QQ plot
+ggplot(diagnostics_df, aes(sample = Standardized_Residuals)) +
+  stat_qq(aes(sample = Standardized_Residuals), distribution = qnorm,
+          size = 2, col="blue", alpha = 0.75) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(title = "Standardized Residual QQ Plot",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_bw()
+
+# Create the sqrt(|standardized residuals|) vs. fitted values plot
+ggplot(diagnostics_df, aes(x = Fitted_Values, y = sqrt(abs(Standardized_Residuals)))) +
+  geom_point(col="blue", alpha=0.75) +
+  labs( title = "Residuals vs. Fitted Values",
+        x = "Fitted Values", y = "sqrt(|Standardized Residuals|)") +
+  theme_bw()
+
+# Leverage vs Standardized Residuals
+ggplot(diagnostics_df, aes(x = Leverage, y = Standardized_Residuals)) +
+  geom_point(alpha = 0.75) +
+  labs(title = "Standardized Residuals vs. Leverage Plot",
+       x = "Leverage", y = "Standardized Residuals") +
+  theme_bw()
+```
+
+# Prediction
+
+We perform predictions on the validation dataset and evaluate prediction performance.
+
+```{r}
+# Prediction
+# Subset the Dataset for validation data
+validation_data <- subset(df, obs_type == "Validation")
+
+# Perform predictions on the validation data
+# 'predict' is an R function used to make predictions using a pre-fitted model. 
+# Here, it is used to predict 'GroundCO' values for the 'validation_data' ...
+# ... based on the linear regression model 'm.mlr' and the predictor ...
+# ... variables in 'validation_data'.
+# The 'predict' function takes the following arguments:
+# - 'object' (m.mlr): This is the model to be used for making predictions.
+# - 'newdata' (validation_data): The new data for which you want to make predictions.
+
+# we need to remove extra model key from validation dataset that is not appeared in training data. 
+car_types_train <- unique(training_data$model_key)
+car_types_valid <- unique(validation_data$model_key)
+
+# Identify car types that are only in the validation set but not in the training set.
+modelkey_to_remove <- setdiff(car_types_valid, car_types_train)
+
+# Filter out the rows in validation set that have car types not present in training set.
+validation_data_filtered <- validation_data[!(validation_data$model_key %in% modelkey_to_remove), ]
+
+# Now df_valid_filtered will have only the car types that are also present in the training set.
+
+validation_data_filtered$Predicted_price <- predict(m.mlr, newdata = validation_data_filtered)
+
+```
+
+## Prediction Performance Metrics and Visualization
+
+Various prediction performance metrics are computed and displayed.
+
+The metrics you've provided are common ways to evaluate the performance of a regression model in predicting numeric outcomes. Here's what each metric suggests about the model's performance in the context of car price predictions:
+
+1. **Root Mean Squared Error (RMSE): 3658.497**
+   - RMSE is a standard way to measure the average magnitude of the error. It gives an idea of how much error the system typically makes in its predictions, with a higher weight to larger errors. An RMSE of 3658.497 indicates that the typical prediction error is about \$3,658.50. Whether this is acceptable depends on the context; if the average car price is \$10,000, this is quite high, but if it's \$100,000, it might be considered relatively low.
+
+2. **Mean Absolute Error (MAE): 2441.089**
+   - MAE measures the average magnitude of the errors in a set of predictions, without considering their direction. An MAE of \$2,441.09 suggests that the average prediction is off by this amount.
+
+3. **R-squared (R²) Score: 0.8092**
+   - R² is a statistical measure that represents the proportion of the variance for the dependent variable that's explained by the independent variables in the model. An R² of 0.8092 means approximately 80.92% of the variability in the actual car price can be explained by the model. This is generally considered a high value, indicating a good level of predictive power.
+
+4. **Mean Absolute Percentage Error (MPE): 0.6326**
+   - MAPE expresses accuracy as a percentage of the error. However, the provided value of 0.6326 seems to be given as a fraction of 1, which would imply a 63.26% average percentage error. This would be extremely high.
+
+In summary, the RMSE and MAE suggest that there may be a fair amount of error in the car price predictions, but the R² indicates a strong predictive power of the model. MAPE is confusing as it suggests a poor model performance, which seems inconsistent with the other metrics. 
+
+```{r}
+# Extract observed and predicted values
+observed_values <- validation_data_filtered$price
+predicted_values <- validation_data_filtered$Predicted_price
+
+# Calculate different prediction performance metrics
+# Functions from the MLmetrics package
+# Common regression metrics
+# Calculate the Root Mean Squared Error (RMSE), which measures the ...
+# ... average magnitude of prediction errors.
+# Lower is better.
+rmse <- RMSE(predicted_values, observed_values)
+print(rmse)
+
+#[1] 3658.497
+
+# Compute the Mean Absolute Error (MAE), indicating the average absolute ...
+# ... difference between predicted and observed values.
+# Lower is better.
+mae <- MAE(predicted_values, observed_values)
+print(mae)
+#[1] 2441.089
+
+
+# Calculate the Mean Absolute Percentage Error (MAPE), measuring the ...
+# ... average percentage difference between predicted and observed values.
+mape <- MAPE(predicted_values, observed_values)
+print(mape)
+#[1] 0.632625
+# same as
+#mean(abs(predicted_values-observed_values)/observed_values)
+
+
+# Determine the R-squared (R²) Score, representing the proportion of the ...
+# ... variance in the observed values (of validation data set) ... 
+# ... explained by the predicted values from the model.
+# Higher is better.
+r_squared <- R2_Score(predicted_values, observed_values)
+print(r_squared)
+#[1] 0.8092314
+# same as
+# summary(lm(observed_values ~ predicted_values))$r.squared
+
+# Display the calculated metrics
+cat("Root Mean Squared Error (RMSE):", round(rmse, digits = 4), "\n")
+cat("Mean Absolute Error (MAE):", round(mae, digits = 4), "\n")
+cat("R-squared (R^2) Score:", round(r_squared, digits = 4), "\n")
+cat("Mean Absolute Percentage Error (MPE):", round(mape, digits = 4), "\n")
+```
+
+Scatterplots and residual plots are created to visualize observed vs. predicted values.
+
+```{r}
+# Create visualizations for assessing the prediction performance
+# Scatterplot of observed vs. predicted values
+# Create the scatter plot
+ggplot(validation_data_filtered, aes(x = price, y = Predicted_price)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Observed Values", y = "Predicted Values",
+       title = "Observed vs. Predicted Values") +
+  theme_bw()
+```
+
+We analyze the residuals and create residual plots for validation and training datasets.
+
+```{r}
+# Residuals plot
+ggplot(validation_data_filtered, aes(x = 1:nrow(validation_data_filtered), y = price-Predicted_price)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = "dashed") +
+  labs(x = "Observation Index", y = "Residuals",
+       title = "Observed vs. Predicted Values") +
+  theme_bw()
+
+# Residuals plot vs Time for the validation data set
+ggplot(validation_data_filtered, aes(x = sold_at, y = price-Predicted_price)) +
+  geom_point(color = 'blue', alpha = 0.75) +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = "dashed") +
+  labs(x = "Sold at", y = "Residuals",
+       title = "Date vs. Residuals (Validation Data)") +
+  theme_bw()
+
+# Residuals plot vs Time for the training data set
+ggplot(diagnostics_df, aes(x = Date, y = Residuals)) +
+  geom_point(color = 'blue', alpha = 0.75) +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = "dashed") +
+  labs(x = "Sold at", y = "Residuals",
+       title = "Date vs. Residuals Values (Training Data)") +
+  theme_bw()
+```
