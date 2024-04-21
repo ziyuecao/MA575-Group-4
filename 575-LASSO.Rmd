@@ -1,0 +1,286 @@
+---
+title: "575-LASSO"
+author: "JieminYang"
+date: "2024-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/08.BU/Academics/MA575/Project/Projects")
+```
+
+
+# read data
+```{r, echo=FALSE}
+df <- read.csv("BMWpricing_updated.csv")
+library(car)
+library(caret)
+library(ggplot2)
+library(MLmetrics)
+library(dplyr)
+library(GGally)
+library(glmnet)
+
+```
+#data process
+
+```{r, include=FALSE}
+# row 2939 has negative mileage values -- we opt to delete it
+df <- df[-which(df$mileage < 0),]
+# row 3765 has 0 engine power values -- we opt to delete it
+df <- df[-which(df$engine_power == 0),]
+
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(df$sold_at, "/")
+registration_split <- strsplit(df$registration_date, "/")
+
+# create field specifying month sold
+df$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+# create field specifying month registered
+df$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+# create field specifying year registered
+df$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+
+# create a field specifying age of each car 
+df$age <- 2018 - df$year_registered + (1/12)*(df$month_sold - df$month_registered)
+
+df_copy <- df
+```
+
+# Run LASSO in training dataset
+
+```{r}
+colnames(df)
+#Turn categorical varianle into factor
+categorical_vars <- c("maker_key", "model_key", "fuel", "paint_color", "car_type", "feature_1", "feature_2", "feature_3", "feature_4", "feature_5", "feature_6", "feature_7", "feature_8","month_sold")
+continous_vars <- c("mileage", "engine_power",  "age")
+df[categorical_vars] <- lapply(df[categorical_vars], as.factor)
+#?? Do I need to seperately scale for train and validation set?
+#Scale continous variable
+df[continous_vars] <- sapply(df[continous_vars], scale)
+#Split training and testing dataset
+training_data <- subset(df, obs_type == "Training")
+
+```
+
+```{r}
+#model fiting
+set.seed(1233) 
+
+#we need to define the model equation
+  X <- model.matrix(
+    price ~ mileage + engine_power + age + model_key + fuel + 
+      paint_color + car_type + feature_1 + feature_2 + feature_3 + feature_4 + 
+      feature_5 + feature_6 + feature_7 + feature_8 + month_sold, data=training_data)[,-1]
+#and the outcome
+  Y <- training_data[,"price"] 
+  
+  #Penalty type (alpha=1 is lasso 
+#and alpha=0 is the ridge)
+  cv.lambda.lasso <- cv.glmnet(x=X, y=Y, 
+                         alpha = 1) 
+  plot(cv.lambda.lasso)                       
+  #MSE for several lambdas
+  cv.lambda.lasso
+
+  #now get the coefs with 
+#the lambda found above
+l.lasso.min <- cv.lambda.lasso$lambda.min
+lasso.model <- glmnet(x=X, y=Y,
+                      alpha  = 1, 
+                      lambda = l.lasso.min)
+lasso.model$beta                             
+#Coefficients
+
+```
+
+# Model Fitting of our selection
+
+We fit a multiple linear regression model using selected predictors.
+
+```{r}
+m.mlr <- lm(formula = price ~ age + model_key +
+                car_type + mileage + feature_4 +
+                feature_6 + feature_8 
+                + age:mileage,
+              data = training_data)
+```
+
+
+## Model Diagnostics
+
+We conduct model diagnostics to assess assumptions and multicollinearity.
+
+```{r, fig.width = 6.5, fig.align = "center", fig.height = 6.5}
+
+# Create a data frame with the residuals and fitted values
+diagnostics_df <- data.frame(Residuals = resid(m.mlr),
+                           Fitted_Values = fitted(m.mlr),
+                           Standardized_Residuals = rstandard(m.mlr),
+                           Leverage = hatvalues(m.mlr),
+                           price = training_data$price
+                           )
+
+Fitted_Values = predict(lasso.model, s = "lambda.min", newx = X)
+Residuals = Y - Fitted_Values
+
+diagnostics_df_lasso <- data.frame(
+                           Fitted_Values,
+                           Residuals,
+                           Y
+                           )
+
+```
+
+
+
+
+```{r}
+# Create the Y vs. fitted values plot
+ggplot(diagnostics_df, aes(x = Fitted_Values, y = price)) +
+  geom_point(col="blue", alpha=0.75) +
+  geom_abline( color = "red") +
+  labs( title = "True Values vs. Fitted Values",
+        x = "Fitted Values", y = "Price") +
+  theme_bw()
+
+ggplot(diagnostics_df_lasso, aes(x = Fitted_Values, y = Y)) +
+  geom_point(col="blue", alpha=0.75) +
+  geom_abline( color = "red") +
+  labs( title = "True Values vs. Fitted Values",
+        x = "Fitted Values", y = "Price") +
+  theme_bw()
+```
+
+# Prediction
+
+We perform predictions on the validation dataset and evaluate prediction performance.
+
+```{r}
+# Prediction
+# Subset the Dataset for validation data
+validation_data <- subset(df, obs_type == "Validation")
+
+# Perform predictions on the validation data
+
+
+# we need to remove extra model key from validation dataset that is not appeared in training data. 
+car_types_train <- unique(training_data$model_key)
+car_types_valid <- unique(validation_data$model_key)
+
+# Identify car types that are only in the validation set but not in the training set.
+modelkey_to_remove <- setdiff(car_types_valid, car_types_train)
+
+# Filter out the rows in validation set that have car types not present in training set.
+validation_data_filtered <- validation_data[!(validation_data$model_key %in% modelkey_to_remove), ]
+
+# Now df_valid_filtered will have only the car types that are also present in the training set.
+
+validation_data_filtered$Predicted_price_ols <- predict(m.mlr, newdata = validation_data_filtered)
+
+  newx_lasso <- model.matrix(
+    price ~ mileage + engine_power + age + model_key + fuel + 
+      paint_color + car_type + feature_1 + feature_2 + feature_3 + feature_4 + 
+      feature_5 + feature_6 + feature_7 + feature_8 + month_sold, data=validation_data_filtered)[,-1]
+
+validation_data_filtered$Predicted_price_lasso <- predict(lasso.model,  s = "lambda.min", newx =  newx_lasso)
+```
+
+## Prediction Performance Metrics and Visualization
+ 
+
+```{r}
+# Extract observed and predicted values
+observed_values<- validation_data_filtered$price
+predicted_values_ols <- validation_data_filtered$Predicted_price_ols
+predicted_values_lasso <- validation_data_filtered$Predicted_price_lasso
+
+
+# Calculate different prediction performance metrics
+# Functions from the MLmetrics package
+# Common regression metrics
+# Calculate the Root Mean Squared Error (RMSE), which measures the ...
+# ... average magnitude of prediction errors.
+# Lower is better.
+rmse_ols <- RMSE(predicted_values_ols, observed_values)
+rmse_lasso <- RMSE(predicted_values_lasso, observed_values)
+print(rmse_ols)
+print(rmse_lasso)
+
+
+# Compute the Mean Absolute Error (MAE), indicating the average absolute ...
+# ... difference between predicted and observed values.
+# Lower is better.
+mae_ols <- MAE(predicted_values_ols, observed_values)
+mae_lasso <- MAE(predicted_values_lasso, observed_values)
+print(mae_ols)
+print(mae_lasso)
+
+
+
+# Calculate the Mean Absolute Percentage Error (MAPE), measuring the ...
+# ... average percentage difference between predicted and observed values.
+mape_ols <- MAPE(predicted_values_ols, observed_values)
+mape_lasso <- MAPE(predicted_values_lasso, observed_values)
+print(mape_ols)
+print(mape_lasso)
+#[1] 0.632625
+# same as
+#mean(abs(predicted_values-observed_values)/observed_values)
+
+
+# Determine the R-squared (R²) Score, representing the proportion of the ...
+# ... variance in the observed values (of validation data set) ... 
+# ... explained by the predicted values from the model.
+# Higher is better.
+r_squared_lasso <- R2_Score(predicted_values_lasso, observed_values)
+r_squared_ols <- R2_Score(predicted_values_ols, observed_values)
+print(r_squared_lasso)
+print(r_squared_ols)
+#[1] 0.8092314
+# same as
+# summary(lm(observed_values ~ predicted_values))$r.squared
+
+# Display the calculated metrics
+cat("Root Mean Squared Error (RMSE)-mlr:", round(rmse_ols, digits = 4), "\n")
+cat("Mean Absolute Error (MAE)-mlr:", round(mae_ols, digits = 4), "\n")
+cat("R-squared (R^2) Score-mlr:", round(r_squared_ols, digits = 4), "\n")
+cat("Mean Absolute Percentage Error (MPE)-mlr:", round(mape_ols, digits = 4), "\n")
+
+cat("Root Mean Squared Error (RMSE)-lasso:", round(rmse_lasso, digits = 4), "\n")
+cat("Mean Absolute Error (MAE)-lasso:", round(mae_lasso, digits = 4), "\n")
+cat("R-squared (R^2) Score-lasso:", round(r_squared_lasso, digits = 4), "\n")
+cat("Mean Absolute Percentage Error (MPE)-lasso:", round(mape_lasso, digits = 4), "\n")
+```
+# Summary
+
+Based on the output metrics you've provided for both the multiple linear regression (MLR) model and the Lasso regression model, here is a summary of the main findings:
+
+### Multiple Linear Regression (MLR) Model Findings:
+
+1. **Root Mean Squared Error (RMSE):** The RMSE for the MLR model is 3658.497. This indicates that, on average, the model’s predictions deviate from the actual values by about \$3,658.497. This can be considered as an indicator of the model’s prediction error, and a lower RMSE is typically better.
+
+2. **Mean Absolute Error (MAE):** The MAE is 2441.089, which suggests that the average absolute error in the model's predictions is around \$2,441.089. MAE gives a straightforward measure of error magnitude and, like RMSE, lower values are better as they indicate more accurate predictions.
+
+3. **R-squared (R²) Score:** The R² score of 0.8092 (or 80.92%) shows that approximately 80.92% of the variance in the car prices is explained by the predictors in the MLR model. This is a strong score, indicating that the model fits the data well and captures most of the variability in car prices.
+
+4. **Mean Absolute Percentage Error (MPE):** The MPE of 0.6326 suggests that there might is a high percentage error.
+
+### Lasso Regression Model Findings:
+
+1. **Root Mean Squared Error (RMSE):** The RMSE for the Lasso model is 3746.948, which is slightly higher than that of the MLR model. This suggests that the Lasso model, on average, has a slightly higher prediction error.
+
+2. **Mean Absolute Error (MAE):** The MAE is slightly lower at 2422.642 compared to the MLR model. This means the average error magnitude is a bit smaller in the Lasso model, which can be seen as a slight advantage over the MLR model in terms of average absolute error.
+
+3. **R-squared (R²) Score:** With an R² of 0.7999 (or 79.99%), the Lasso model explains slightly less variance compared to the MLR model. It still indicates a good fit, capturing a significant portion of the variability in the data, but is marginally less effective than the MLR model in this regard.
+
+4. **Mean Absolute Percentage Error (MPE):** The MPE of 0.7513, if interpreted as 75.13%, also indicates potentially high percentage errors, which would suggest less accuracy in predictions when evaluated in percentage terms. 
+
+### Comparative Summary:
+
+- Both models demonstrate good predictive power with strong R² values, although the MLR model performs slightly better in terms of R² and RMSE, suggesting it might be a better fit for the data.
+- The Lasso model shows a slightly lower MAE, indicating better performance in terms of average absolute error.
+
+In summary, while both models are effective, the choice between using MLR or Lasso might hinge on specific aspects of model performance that are prioritized, such as the minimization of prediction error or the explanation of variance.
