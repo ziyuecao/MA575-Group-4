@@ -1,0 +1,465 @@
+---
+title: "mlr-del3"
+author: "Rui Gong (Edited By Eri)"
+date: "2024-03-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(GGally)
+library(tinytex)
+library(dplyr)
+library(caret)
+library(MLmetrics)
+```
+
+```{r}
+# Read updated dataset
+bmw_data <- read.csv("/Users/eri/Downloads/2023-2024/MA 575/Lab Project/BMWpricing_updated(1) (1).csv", header=TRUE, as.is=TRUE)
+# create summary
+summary(bmw_data)
+# checking missing values
+sum(is.na(bmw_data))
+# no missing values
+
+# check inappropriate values
+# min mileage is -64, which doesn't make sense for any value less than 0
+# min engine power is 0, which doesn't make sense for any value less or equal to 0
+print(which(bmw_data$mileage < 0))
+# row 2939 has negative mileage values - need to delete
+bmw_data <- bmw_data[-which(bmw_data$mileage < 0),]
+# engine power = 0 also doesn't make sense
+print(which(bmw_data$engine_power == 0))
+# row 3765 has 0 engine power values - need to delete
+bmw_data <- bmw_data[-which(bmw_data$engine_power == 0),]
+```
+```{r}
+"bmw_fuel <- split(bmw_data, bmw_data$fuel)
+bmw.dissel <- bmw_fuel$diesel
+bmw.petrol <- bmw_fuel$petrol
+bmw.hybrid <- bmw_fuel$hybrid_petrol
+bmw.electric <- bmw_fuel$electro
+# particion the dataset by fuel type
+# do scatterplot matrix to study the distribution
+scatterplotMatrix(~ bmw.dissel$age + bmw.dissel$engine_power + bmw.dissel$mileage + bmw.dissel$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.petrol$age + bmw.petrol$engine_power + bmw.petrol$mileage + bmw.petrol$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.hybrid$age + bmw.hybrid$engine_power + bmw.hybrid$mileage + bmw.hybrid$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.electric$age + bmw.electric$engine_power + bmw.electric$mileage + bmw.electric$price,
+                  pch=19, cex=0.1)
+# comparison group
+scatterplotMatrix(~ bmw_data$age + bmw_data$engine_power + bmw_data$mileage + bmw_data$price,
+                  pch=19, cex=0.1)"
+```
+
+```{r}
+"bmw_data$Age_type <- cut(bmw_data$age,
+                      breaks = c(2, 4, 8, 16, 32),
+                      labels = c(Almost New", "Sightly Aged", "Aged", "Aged a Lot))
+bmw_Age<- split(bmw_data, bmw_data$Age_type)
+bmw.new <- bmw_Age$`Almost New`
+bmw.moderate <- bmw_Age$`Sightly Aged`
+bmw.aged <- bmw_Age$Aged
+bmw.extrmeage <- bmw_Age$`Aged a Lot`
+scatterplotMatrix(~ bmw.new$engine_power + bmw.new$mileage + bmw.new$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.moderate$engine_power + bmw.moderate$mileage + bmw.moderate$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.aged$engine_power + bmw.aged$mileage + bmw.aged$price,
+                  pch=19, cex=0.1)
+scatterplotMatrix(~ bmw.extrmeage$engine_power + bmw.extrmeage$mileage + bmw.extrmeage$price,
+                  pch=19, cex=0.1)"
+```
+
+
+```{r}
+summary(bmw_data)
+# notice only two observations are marked as NAs in the dataset
+```
+```{r, echo = FALSE}
+# create a new variable age and attach it to the same dataframe
+# split the registration date and sold date vectors first, in order to calculate age
+sold_at_split <- strsplit(bmw_data$sold_at, "/")
+registration_split <- strsplit(bmw_data$registration_date, "/")
+
+# assign month only; all sold in 2018
+bmw_data$month_sold <- sapply(sold_at_split, function(x) as.integer(x[1]))
+bmw_data$year_sold <- sapply(sold_at_split, function(x) as.integer(x[3]))
+bmw_data$month_registered <- sapply(registration_split, function(x) as.integer(x[1]))
+bmw_data$year_registered <- sapply(registration_split, function(x) as.integer(x[3]))
+price <- bmw_data$price # our y variable
+bmw_data$age <- bmw_data$year_sold-bmw_data$year_registered + (1/12)*(bmw_data$month_sold - bmw_data$month_registered) # our x variable
+age <- bmw_data$age
+```
+
+```{r}
+# apply histogram to check for distribution and implausible values
+# since we decide log(price)~age is the best model for relationship between price and age, we will use log(price) in the histogram and scatterplot
+par(mfrow = c(2, 2))
+hist(bmw_data$mileage) # right skewed
+hist(bmw_data$engine_power) # right skewed
+hist(bmw_data$age) # right skewed
+hist(bmw_data$price) # right skewed
+
+par(mfrow = c(2, 2))
+hist(sqrt(bmw_data$price)) # still right skewed
+hist(sqrt(bmw_data$engine_power)) # slightly right skewed
+hist(sqrt(bmw_data$age)) # approximately normal
+hist(sqrt(bmw_data$mileage))# approximately normal
+
+par(mfrow = c(2, 2))
+hist(log(bmw_data$price)) # approximately normal
+hist(bmw_data$engine_power^0.25) # approximately normal
+hist(sqrt(bmw_data$age)) # approximately normal
+hist(sqrt(bmw_data$mileage))# approximately normal
+```
+
+
+```{r}
+# some interesting explorations here
+par(mfrow = c(2, 1))
+barplot(table(bmw_data$paint_color))
+barplot(table(bmw_data$model_key))
+barplot(table(bmw_data$fuel))
+barplot(table(bmw_data$car_type))
+
+# first start with model key
+names(table(bmw_data$model_key))[which.max(table(bmw_data$model_key))]
+max(table(bmw_data$model_key))
+# the most popular model is bmw 320, which is sold 752 times in the dataset
+
+# create a new dataframe, sort the model_keys by frequencies, and append them side by side
+models <- sort(table(bmw_data$model_key))
+models_names <- names(models)
+frequencies <- as.vector(models)
+models = cbind(models_names, frequencies)
+# second most popular model is bmw 520, sold 633 times
+# third most popular model is bmw 318, sold 569 times
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=model_key, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Model_keys")
+
+# second explore the car type
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=car_type, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Car_type")
+# mean price of couple is the highest, SUV the second highest
+# mean price of subcompact is the lowest
+# non-constant variance detected across car type
+
+# third explore paint color
+bmw_data = subset(bmw_data, bmw_data$price < 120000)
+ggplot(bmw_data, aes(x=paint_color, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+# fourth group age into categories and study it's distribution
+bmw_data$age_cat <- cut(bmw_data$age, breaks = c(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20))
+ggplot(bmw_data, aes(x=age_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x=age_cat, y=log(price))) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+ggplot(bmw_data, aes(x=paint_color, y=age_cat)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+
+bmw_data$engine_cat <- cut(bmw_data$engine_power, breaks = c(0, 100, 200, 300, 600), labels = c('low', 'medium', 'high', 'very high'))
+ggplot(bmw_data, aes(x= engine_cat, y=price)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x= engine_cat, y=age)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+ggplot(bmw_data, aes(x= engine_cat, y= mileage)) +
+    geom_boxplot(fill="lightblue") +
+    xlab("Paint_color")
+```
+
+```{r}
+scatterplotMatrix(~ bmw_data$age + bmw_data$engine_power + bmw_data$mileage + bmw_data$price,
+                  pch=19, cex=0.1)
+```
+
+```{r}
+par(mfrow = c(1, 3))
+plot(bmw_data$age, bmw_data$mileage, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$engine_power, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$price^0.25, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$engine_power, bmw_data$price, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$price, pch=19, cex=0.2)
+plot(bmw_data$age, bmw_data$price, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$engine_power, bmw_data$mileage, pch=19, cex=0.2)
+plot(bmw_data$engine_power, bmw_data$age, pch=19, cex=0.2)
+plot(bmw_data$engine_power, bmw_data$price, pch=19, cex=0.2)
+par(mfrow = c(1, 3))
+plot(bmw_data$mileage, bmw_data$engine_power, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$age, pch=19, cex=0.2)
+plot(bmw_data$mileage, bmw_data$price, pch=19, cex=0.2)
+```
+
+```{r}
+# after exploration, we are ready to build the models
+# define dependent variable and independent variables
+logy <- log(bmw_data$price)
+y <- bmw_data$price
+x1 <- bmw_data$age
+x2 <- bmw_data$engine_power
+x3 <- bmw_data$mileage
+m.ols <- lm(logy~x1)
+# regular model with log price and normal age, enginepower, mileage
+m.mls <- lm(logy~x1+x2+x3)
+# regular model with log price and normal age, enginepower, mileage, include interaction term between age and mileage because the linear pattern in scatterplot of age and mileage
+m.interact <- lm(logy~x1+x2+x3+x1*x3)
+# taking square root of age and enginepower, and mileage becuase the right skewness, and include interaction term
+m.root_interact <- lm(logy~sqrt(x1)+sqrt(x2)+sqrt(x3)+x1*x3) # best model in multiple regression
+
+# Diagnostics for the three test models
+# logy = x1 + x2 + x3
+summary(m.mls)
+# coefficients for mls
+summary(m.mls)$coefficients
+# r^2 for mls
+summary(m.mls)$r.squared
+
+# logy = x1 + x2 + x3 + x1*x3
+summary(m.interact)
+# coefficients for mls with interaction
+summary(m.interact)$coefficients
+# r^2 for mls with interaction
+summary(m.interact)$r.squared
+
+# logy = sqrt(x1) + sqrt(x2) + sqrt(x3) + x1*x3
+summary(m.root_interact)
+# coefficients for root mls with interaction
+summary(m.root_interact)$coefficients
+# r^2 for root mls with interaction
+summary(m.root_interact)$r.squared
+```
+Interpretation:
+Coefficients:
+Significance of Coefficient:
+
+
+
+```{r}
+# Diagnostic of test models
+# those are selected models, so all assumptions are met for these models
+# including:
+# linearity of mean
+# constant variance of residual with no patterns 
+# normally distributed response and covariates
+
+# independent covariate is off because there is an linear relationship between age and mileage show in the scatterplot, so interaction term included to reduce the influence
+par(mfrow = c(2,2))
+plot(m.ols)
+# m.mls is 
+par(mfrow = c(2,2))
+plot(m.mls)
+par(mfrow = c(2,2))
+plot(m.interact)
+summary(m.interact)
+par(mfrow = c(2,2))
+plot(m.root_interact)
+summary(m.root_interact)
+
+# rank the prediction power
+r2_adj = c(summary(m.ols)$adj.r.squared, summary(m.mls)$adj.r.squared, summary(m.interact)$adj.r.squared, summary(m.root_interact)$adj.r.squared)
+names = c('OLS', 'MLS', 'MLS with Interaction', 'Root MLS with Interaction')
+data.frame(names, r2_adj)
+# root MLS with interaction has highest prediction power at about 61.79%
+```
+```{r}
+# Splitting the Data
+# Set a seed for reproducibility
+set.seed(20231103)
+
+# Split the data into training and validation sets
+index <- createDataPartition(y = bmw_data$price, p = 0.5, list = FALSE)
+
+# Create a new variable called Type assigning observations to training/validation
+bmw_data$Type <- NA
+bmw_data$Type[index] <- "Training"
+bmw_data$Type[-index] <- "Validation"
+
+```
+
+```{r}
+# Create a ggplot grouped boxplot for price by Type
+ggplot(bmw_data, aes(x = Type, y = price, color = Type)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Type", y = "Price") +
+  scale_color_manual(name = "Dataset Type", values = c("Training" = "blue", "Validation" = "red")) +
+  ggtitle("Price by Type (Training vs. Validation)") +
+  theme_bw()
+```
+
+```{r}
+# Table comparing training and Validation observations by car type
+table(bmw_data$model_key, bmw_data$Type)
+
+# Table comparing training and Validation observations by age
+table(bmw_data$age_cat, bmw_data$Type)
+```
+
+```{r}
+# Predictions
+# Subset the data to only include training data
+training_data <- subset(bmw_data, Type == "Training")
+
+# Fit the MLR model using the specified predictors
+m.mlr <- lm(log(price) ~ age + engine_power + mileage, data = training_data)
+
+# Subset the data for validation data
+validation_data <- subset(bmw_data, Type == "Validation")
+
+# Perform predictions on the validation data
+validation_data$Predicted_price <- exp(predict(m.mlr, newdata = validation_data))
+
+# Predicted Values performance metrics
+observed_values <- validation_data$price
+predicted_values <- validation_data$Predicted_price
+
+# Compute the Root Mean Squared Error
+rmse <- RMSE(predicted_values, observed_values)
+
+# Compute the Mean Absolute Error (MAE)
+mae <- MAE(predicted_values, observed_values)
+
+# Calculate the Mean Absolute Percentage Error (MAPE)
+mape <- MAPE(predicted_values, observed_values)
+
+# Determine the R-squared (R²) Score
+r_squared <- R2_Score(predicted_values, observed_values)
+
+# Display the calculated metrics
+cat("Root Mean Squared Error (RMSE):", round(rmse, digits = 4), "\n")
+cat("Mean Absolute Error (MAE):", round(mae, digits = 4), "\n")
+cat("R-squared (R^2) Score:", round(r_squared, digits = 4), "\n")
+cat("Mean Absolute Percentage Error (MPE):", round(mape, digits = 4), "\n")
+
+
+# Scatterplot of observed vs. predicted values
+ggplot(validation_data, aes(x = price, y = Predicted_price)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Observed Values", y = "Predicted Values",
+       title = "Observed vs. Predicted Values") +
+  theme_bw()
+
+# Residuals plot for predicted prices
+ggplot(validation_data, aes(x = 1:nrow(validation_data), y = price - Predicted_price)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = "dashed") +
+  labs(x = "Observation Index", y = "Residuals",
+       title = "Residuals Plot for Predicted Prices") +
+  theme_bw()
+```
+Values:
+ RMSE = 6011.506
+ MAE = 3244.32
+ R^2 = 0.5006
+ MPE = 0.5227
+ 
+```{r}
+ # Fit the full model with all predictors
+full_model <- lm(price ~ age + engine_power + mileage + car_type,
+                 data = training_data)
+
+# Examine the summary of the full model.
+summary(full_model)
+
+# Added variable plots
+avPlots(full_model)
+
+# Variance inflation factors
+vif(full_model)
+
+# Fit the reduced model with all predictors
+reduced_model <- lm(price ~ age + engine_power + mileage,
+                 data = training_data)
+# Examine the summary of the reduced model
+summary(reduced_model)
+
+# Added variable plots (reduced model)
+avPlots(reduced_model)
+
+# Variance inflation factors (reduced model)
+vif(reduced_model)
+
+```
+```{r}
+# MODEL SELECTION METRICS
+
+# Partial F Test
+# Employed to assess the joint significance of a group of coefficients in a model by comparing the fit of a full model (with the group of coefficients) to that of a reduced model (without the group). It helps determine whether the added group of variables significantly improves the overall fit of the model.
+
+# Partial F-test for the excluded predictors
+anova(full_model, reduced_model)
+
+# Model 1 (the full model) and Model 2 (the reduced model with certain predictors excluded). The aim is to determine whether excluding the specific predictors significantly affects the model's fit. Here's how to interpret the results:
+# Sum of Sq (Sum of Squares) represents the difference in residual sum of squares between the two models.
+# F (F-statistic) tests the null hypothesis that excluding the specific predictors has no effect on the model's fit.
+# Pr(>F) (p-value) associated with the F-statistic tests the significance of the model comparison.
+# Here, the partial F-test indicates that excluding car_type from the model might be affecting the model's fit. The full model could be a better fit than the reduced model.
+
+# Adjusted R-squared
+# A higher adjusted R-squared value indicates that a larger proportion of the variance in the dependent variable is explained by the independent variables (predictors) in your regression model.
+# Full_model
+summary(full_model)$adj.r.squared
+
+# Reduced_model
+summary(reduced_model)$adj.r.squared
+
+# AIC and BIC
+# AIC balances the goodness of fit of a model with the complexity of the model to prevent overfitting. A lower AIC indicates a better trade-off between model fit and model complexity.
+# Compare the AIC for both models
+AIC(full_model, reduced_model)
+
+# BIC also balances model fit and complexity, but BIC tends to select simpler models.
+# Compare BIC for both full and the reduced models
+
+BIC(full_model, reduced_model)
+```
+```{r}
+# STEPWISE REGRESSION (best subset model)
+
+# Perform stepwise regression
+stepwise_model <- step(full_model, direction = "both")
+
+# Print the stepwise model summary
+summary(stepwise_model)
+
+# Added variable plots
+avPlots(stepwise_model)
+
+# Variance inflation factors
+vif(stepwise_model)
+
+# Fit the full model with all predictors and interaction terms
+full_model_2 <- lm((log(price)) ~ age + I(age^2) + I(engine_power^2) + I(sqrt(engine_power))  + I(sqrt(age))+ engine_power + mileage + car_type,
+                 data = training_data)
+stepwise_model_2 <- step(full_model_2, direction = "both")
+
+"lm(price ~ ., data = data_source)"
+
+# Print the stepwise model summary
+summary(stepwise_model_2)
+
+# Added variable plots
+avPlots(stepwise_model_2)
+
+# Calculate VIF
+vif(stepwise_model_2)
+```
